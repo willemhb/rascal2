@@ -19,6 +19,7 @@ rproc_t* vm_new_proc(rval_t argl, rval_t env, rval_t body, uint32_t flags) {
   pobj->head.type = TYPECODE_PROC;
   pobj->head.flags = flags;
   pobj->argspec = argl;
+  pobj->env = env;
   pobj->body = body;
 
   return pobj;
@@ -43,6 +44,11 @@ int32_t vm_check_argco(rproc_t* p, rval_t v) {
     return EVALARGS_OK;
   }
 }
+
+int32_t vm_check_args(rproc_t* p, rval_t v) {
+  
+}
+
 
 void vm_push(rval_t v) {
   if (vm_stack_overflow(1)) {
@@ -104,10 +110,15 @@ rval_t vm_analyze(rval_t x) {
 void vm_eval() {
   static void* labels[] = { &&ev_def, &&ev_setv, &&ev_quote, &&ev_let,
                             &&ev_do, &&ev_label, &&ev_fn, &&ev_macro, &&ev_if,
-                            &&ev_illegal, &&ev_literal, &&ev_variable, &&ev_application,
-                            &&ev_unknown, &&ev_assign, &&ev_assign_end,
-			    &&ev_application_op_done, };
+                            &&ev_illegal, &&ev_dispatch, &&ev_literal, &&ev_variable,
+			    &&ev_application, &&ev_unknown, &&ev_assign, &&ev_assign_end,
+			    &&ev_application_op_done, &&ev_arg_loop, &&ev_accumulate_arg,
+			    &&ev_application_dispatch, &&ev_macro_done, };
+  int32_t argcheck;
 
+  goto ev_dispatch;
+
+ ev_dispatch:
   goto *labels[vm_analyze_expr(EXP)];
   
  ev_literal:  // save the current values of every register and install e in the environment
@@ -177,17 +188,41 @@ void vm_eval() {
  ev_application_op_done:
   restore(UNEV);
   restore(ENV);
-  ARGL = NIL;
   PROC = VAL;
 
   if (ismacro(_toproc(PROC))) {
-    goto ev_macro_args;
-  } else if (isprim(_toproc(PROC))) {
-    goto ev_prim_args;    
+    ARGL = UNEV;
+    save(CONTINUE);
+    CONTINUE = EV_MACRO_DONE;
+    goto ev_application_dispatch;
   } else {
-    goto ev_fn_args;
+    ARGL = NIL;
+    goto ev_args_loop;
   }
 
- ev_macro_args:
-  
+ ev_args_loop:
+  if (isnil(UNEV)) {
+    goto ev_application_dispatch;
+  }
+
+  EXP = _tocons(UNEV)->car;
+  save(ARGL);
+  save(UNEV);
+
+  goto ev_dispatch;
+
+ ev_accumulate_arg:
+  restore(UNEV);
+  restore(ARGL);
+  ARGL = tagcons(vm_cons_append(_tocons(ARGL), VAL));
+  UNEV = _tocons(UNEV)->cdr;
+
+  goto ev_arg_loop;
+
+ ev_application_dispatch:
+
+ ev_macro_done:
+  EXP = VAL;
+  restore(CONTINUE);
+  goto ev_dispatch;
 }

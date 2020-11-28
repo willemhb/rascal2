@@ -12,7 +12,6 @@
 #include <setjmp.h>
 
 #include "lib/strlib.h"
-#include "rctypes.h"
 
 /* core type  and variable definitions go in this module */
 /* typedefs for core builtins */
@@ -155,7 +154,7 @@ rtype_t** TYPES;
 /* evaluator */
 // the stack
 rval_t* STACK;
-i32_t STACKSIZE, SP;
+int32_t STACKSIZE, SP;
 
 // the evaluator core
 rval_t EXP, ARGL, VAL, UNEV, PROC, ENV, CONTINUE;
