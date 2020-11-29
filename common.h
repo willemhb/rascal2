@@ -18,6 +18,7 @@
 typedef uintptr_t rval_t;
 typedef unsigned char uchr_t;
 typedef char chr_t;
+typedef uchr_t rbvec_t;
 typedef int32_t rint_t;
 typedef struct _rtype_t rtype_t;
 typedef struct _robj_t robj_t;
@@ -41,14 +42,8 @@ struct _robj_t {
 };
 
 struct _rcons_t {
-  OBJECT_HEAD;
   rval_t car;
   rval_t cdr;
-};
-
-enum {
-  CONSFLAG_NOLIST,
-  CONSFLAG_LIST,
 };
 
 struct _rsym_t {
@@ -59,11 +54,6 @@ struct _rsym_t {
   chr_t name[1];
 };
 
-enum {
-  SYMFLAG_UNINTERNED,
-  SYMFLAG_INTERNED,
-};
-
 struct _rtype_t {
     OBJECT_HEAD;          // pointer to the type, also holds flags on the data field
     struct {
@@ -71,9 +61,10 @@ struct _rtype_t {
       uint64_t lowtag : 1;
       uint64_t free : 46;
     } flags;
-    rval_t (*tp_constructor)();
+    rproc_t* tp_constructor;
     void*  (*tp_new)();
     uint32_t (*tp_sizeof)();
+    chr_t* (*tp_write)(rval_t, FILE*);
     rsym_t* tp_name;
 };
 
@@ -85,38 +76,68 @@ struct _rstr_t {
 
 struct _rproc_t {
   OBJECT_HEAD;
-  rval_t argspec;      // this is a list of argument names for lambdas and a list of argument types for builtins
+  rval_t formals;      // this is a list of argument names for lambdas and a list of argument types for builtins
   rval_t env;          // this is nil for builtins and list of local environments for lambdas
   rval_t body;         // either a builtin function or 
-};
-
-enum {
-  PROCFLAGS_CALLMODE_FUNC=0b000,
-  PROCFLAGS_CALLMODE_MACRO=0b001,
-  PROCFLAGS_BODYTYPE_EXPR=0b000,
-  PROCFLAGS_BODYTYPE_CFNC=0b010,
-  PROCFLAGS_VARGS_TRUE=0b100,
-  PROCFLAGS_VARGS_FALSE=0b000,
 };
 
 struct _rport_t {
   OBJECT_HEAD;
   FILE* stream;
+  chr_t chrbuff[8];
 };
 
-/* tag values */
+/* 
+   tag values 
+
+   the lowtag comprises the 2 least significant bits of an rval_t. They indicate how the value should be interpreted.
+   the lowtags are direct (small integers, floats, etc.), objptr (pointer to an object head with additional type information),
+   strptr (a pointer to a null-terminated array of bytes), or a pointer to a cons.
+
+   the widetag is the 3rd least-significant bit, and represents type-specific metadata. The widetag belongs to the type, ie,
+   objects are not free to set the widetags of their constituent members. The widetag is used to, for example, indicate whether
+   a cons is a valid list, or whether a bytestring represents binary or textual data.
+ 
+*/
 
 enum {
-  LOWTAG_DIRECT,
-  LOWTAG_OBJPTR,
+  LOWTAG_DIRECT=0b00,
+  LOWTAG_OBJPTR=0b01,
+  LOWTAG_BVECPTR=0b10,
+  LOWTAG_CONSPTR=0b11,
+  DEFAULT_WTAG=0b0,
+};
+
+/* 
+
+   for convenience, the full tags for common builtin types and variants are given below
+   these are not unambiguous typecodes, but they are to aid in creating tags and for distinguishing
+   cons pointers from list pointers. They are NOT a proper type test.
+*/
+
+enum {
+  TAG_INT=LOWTAG_DIRECT,
+  TAG_TYPE=LOWTAG_OBJPTR,
+  TAG_CONS=LOWTAG_CONSPTR,
+  TAG_SYM=LOWTAG_OBJPTR,
+  TAG_SYM_INTERNED=0x4 | LOWTAG_OBJPTR,
+  TAG_SYM_UNINTERNED=LOWTAG_OBJPTR,
+  TAG_BVEC=LOWTAG_BVECPTR,
+  TAG_BVEC_BIN=0x4 | LOWTAG_BVECPTR,
+  TAG_BVEC_TXT=LOWTAG_BVECPTR,
+  TAG_STR=LOWTAG_OBJPTR,
+  TAG_LIST= 0x4 | LOWTAG_CONSPTR,
+  TAG_PROC=LOWTAG_OBJPTR,
+  TAG_PORT=LOWTAG_OBJPTR,
 };
 
 enum {
   TYPECODE_NIL,
   TYPECODE_NONE,
   TYPECODE_TYPE,
-  TYPECODE_SYM,
+  TYPECODE_BVEC,
   TYPECODE_CONS,
+  TYPECODE_SYM,
   TYPECODE_STR,
   TYPECODE_PROC,
   TYPECODE_PORT,
@@ -124,19 +145,19 @@ enum {
   NUM_BUILTIN_TYPES,
 };
 
-chr_t* BUILTIN_TYPENAMES[] = { "nil", "none", "type", "sym", "cons", "str",
-                               "proc", "port", "int"};
+chr_t* BUILTIN_TYPENAMES[] = { "nil", "none", "type", "bvec", "cons",
+                                "sym", "str", "proc", "port", "int"};
 
-#define lowtag(v)        ((v) & 0b1)
-#define widetag(v)       (((v) & 0b110) >> 1)
-#define setwidetag(v,t)  v = v & (~0b110ul) | t
-#define untagv(v)        ((v) & (~0b111ul))
+#define ltag(v)          ((v) & 0x3)
+#define wtag(v)          (((v) & 0x4)>>2)
+#define tag(v)           ((v) & 0x7)
+#define untag(v)         ((v) & ~0x7ul)
 #define val(v)           ((v) >> 32)
-#define ptr(v)           ((void*)((v) & ~0x3))
+#define ptr(v)           ((void*)untag(v))
 #define cptr(v)          ((void*)(v))
 #define tagptr(p,t)      (((rval_t)(p)) | (t))
 #define tagval(v,t)      ((rval_t)(((v) << 32) | (t)))
-#define heapobj(v)       ((uchr_t*)ptr(v))
+#define hobj(v)          ((uchr_t*)ptr(v))
 #define obj(v)           ((robj_t*)ptr(v))
 
 /* memory */
@@ -156,12 +177,18 @@ rtype_t** TYPES;
 rval_t* STACK;
 int32_t STACKSIZE, SP;
 
-// the evaluator core
-rval_t EXP, ARGL, VAL, UNEV, PROC, ENV, CONTINUE;
+// the evaluator core to reduce errors and unnecessary checking, these registers are typed
+rval_t EXP, VAL, CONTINUE;
+rsym_t* NAME;               // special register for holding unevaluated names
+rcons_t* ARGL, *UNEV, *ENV;
+rproc_t* PROC;
+
 rsym_t* GLOBALS;
 
 // special constants
-rval_t NIL = TYPECODE_NIL, NONE = TYPECODE_NONE, OK, T;
+// The lowtags and typecodes are laid out so that NIL, including correct lowtag and typecode, has
+// a value of 0, allowing it to be interpreted as C 'NULL'.
+rval_t NIL = 0, NONE = TYPECODE_NONE << 3, OK, T;
 
 #define isnil(v)  ((v) == NIL)
 #define isnone(v) ((v) == NONE)

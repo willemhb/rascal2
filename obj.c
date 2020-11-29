@@ -2,10 +2,15 @@
 
 /* type utilities */
 int32_t typecode(rval_t v) {
-  int32_t lt = lowtag(v);
-  if (lt == LOWTAG_DIRECT) {
+  int32_t lt = ltag(v);
+  switch (lt) {
+  case LOWTAG_CONSPTR:
+  case LOWTAG_BVECPTR:
+    return lt;
+  case LOWTAG_DIRECT:
     return (v & UINT_MAX) >> 3;
-  } else {
+  case LOWTAG_OBJPTR:
+  default:
     return obj(v)->head.type;
   }
 }
@@ -26,10 +31,10 @@ chr_t* vm_val_typename(rval_t v) {
   }
 }
 
-uint32_t vm_obj_size (rval_t v) {
-  if (lowtag(v) == LOWTAG_DIRECT) {
+uint32_t vm_obj_size(rval_t v) {
+  if (ltag(v) == LOWTAG_DIRECT) {
     return 8;
   } else {
-    return type(v)->tp_sizeof(obj(v));
+    return type(v)->tp_sizeof(v);
   }
 }
