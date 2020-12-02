@@ -1,116 +1,47 @@
 #include "eval.h"
 
-static int32_t vm_validate_formals(rval_t formals, uint8_t bodytype) {
-  /* 
-     this helper function will return the number of arguments if it's a valid list of formals for the given
-     bodytype, the negative of that count + 1 it's a valid argument list with rest args, and 0 if it is not
-     a valid argument list.
-
-   */
-  if (bodytype == BODYTYPE_EXPR) {
-    if (vm_list_of(formals, TYPECODE_INT)) {
-      return vm_list_len(formals);
-    } else {
-      return -1;
-    }
-  } else if (vm_list_of(formals,TYPECODE_SYM)) {
-    return vm_list_len(formals);
-  } else if (vm_cons_of(formals,TYPECODE_SYM,REQUIRE_CONS)) {
-    return -1 + (-1 * vm_cons_len(formals,REQUIRE_CONS));
-  } else if (typecode(formals) == TYPECODE_SYM) {
-    return -2;
-  } else {
-    return -1;
-  }
-}
-
 /* working with procedure types */
-rproc_t* vm_new_proc(rval_t formals, rval_t env, rval_t body, uint8_t callmode, uint8_t bodytype) {
-  uint8_t vargs = VARGS_FALSE;
-  int32_t nargs = vm_validate_formals(formals, bodytype);
-
-  if (nargs == -1) {
-    eprintf(stderr,"Invalid argument list of type %s.\n", vm_val_typename(formals));
-    escape(ERROR_TYPE);
-  } else if (nargs < 1) {
-    nargs *= -1;
-    nargs -= 1;
-    vargs = VARGS_TRUE;
+proc_t* new_proc(val_t formals, val_t env, val_t body, proc_fl callmode, proc_fl bodytype) {
+  if (!isenvnames(formals)) {
+    failv(TYPE_ERR,NULL,"Bad list of variable names");
   }
-  // this is where the argument list is evaluated
   
-  
-  uchr_t* obj = vm_allocate(sizeof(rproc_t));
-  rproc_t* pobj = (rproc_t*)obj;
-  pobj->head.type = TYPECODE_PROC;
-  pobj->head.meta = nargs;
-  pobj->head.flags = 0;
+  int_t argco = ncells(formals);
+  proc_fl vargs = islist(formals) ? VARGS_FALSE : VARGS_TRUE;
 
-  setcallmode(pobj,callmode);
-  setbodytype(pobj,bodytype);
-  setvargs(pobj,vargs);
-  pobj->formals = formals;
-  pobj->env = env;
-  pobj->body = body;
+  proc_t* obj = (proc_t*)vm_allocate(sizeof(proc_t));
 
-  return pobj;
+  // initialize
+  type_(obj) = TYPECODE_PROC;
+  argco_(obj) = argco;
+  callmode_(obj) = callmode;
+  bodytype_(obj) = bodytype;
+  vargs_(obj) = vargs;
+  formals_(obj) = formals;
+  env_(obj) = env;
+  body_(obj) = body;
+
+  return obj;
 }
 
-uint32_t vm_proc_objsize() {
-  return sizeof(rproc_t);
+uint_t vm_proc_objsize() {
+  return sizeof(proc_t);
 }
 
-rval_t (*vm_proc_cfnc(rproc_t* p))(rcons_t*) {
-  void* cfnc = cptr(p->body);
-  return (rval_t(*)(rcons_t*))cfnc;
-}
+inline bool check_argco(int_t argc, val_t argl, bool vargs) {
+  int_t nargs = ncells(argl);
 
-int32_t vm_check_argco(int32_t argc, rval_t v, bool vargs) {
-  int32_t nargs = vm_list_len(v);
-
-  if (nargs < 1) {
-    return EVALARGS_NONLIST;
-  } else if (nargs < argc) {
-    return EVALARGS_ARITY_SHORT;
-  } else if (nargs > argc  && !vargs) {
-    return EVALARGS_ARITY_LONG;
-  } else {
-    return EVALARGS_OK;
-  }
-}
-
-int32_t vm_check_argtypes(rval_t formals, rval_t v) {
-  while (iscons(v)) {
-    uint32_t currt = val(_tocons(formals)->car);
-    rval_t curr = _tocons(v)->car;
-    if (typecode(curr) != currt) return EVALARGS_TYPE;
-    formals = _tocons(formals)->cdr;
-    v = _tocons(v)->cdr;
-  }
-
-  return EVALARGS_OK;
-}
-
-int32_t vm_check_args(rproc_t* p, rval_t v) {
-  int32_t argc = argco(p);
-  rval_t formals = p->formals;
-  bool hasv = vargs(p);
-  int32_t argco_check = vm_check_argco(argc,v,hasv);
-
-  if (argco_check) return argco_check;
-  else if (bodytype(p) == BODYTYPE_CFNC) {
-    return vm_check_argtypes(formals,v);
-  } else {
-    return EVALARGS_OK;
-  }
+  if (nargs < argc) return false;
+  else if (nargs > argc) return vargs;
+  else return true;
 }
 
 
 /* stack interface */
-void vm_push(rval_t v) {
-  if (vm_stack_overflow(1)) {
-    eprintf(stderr, "Exiting due to stack overflow.\n");
-    escape(ERROR_OVERFLOW);
+inline void _push(val_t v) {
+  if (stack_overflow(1)) {
+    eprintf(OVERFLOW_ERR,stderr,"stack overflow");
+    escape(OVERFLOW_ERR);
   }
 
   SP++;
@@ -118,59 +49,58 @@ void vm_push(rval_t v) {
   return;
 }
 
-void vm_save_rcons(rcons_t* r) {
-  vm_push(tagcons(r));
+inline void _pushs(sym_t* v) {
+  _push(tagptr(v,LOWTAG_STROBJ));
   return;
 }
 
-void vm_save_rsym(rsym_t* r) {
-  vm_push(tagsym(r));
+
+inline void _pushc(cons_t* c) {
+  _push(tagc(c));
   return;
 }
 
-rval_t vm_pop() {
+inline void _pusho(obj_t* o) {
+  _push(tagptr(o,LOWTAG_OBJPTR));
+  return;
+}
+
+inline val_t pop() {
   if (SP == -1) {
-    eprintf(stderr, "Exiting due to stack underflow.\n");
-    escape(ERROR_OVERFLOW);
+    eprintf(OVERFLOW_ERR,stderr,"pop on empty stack");
+    escape(OVERFLOW_ERR);
   }
 
   return STACK[--SP];
 }
 
-
-rval_t vm_peek() {
+inline val_t peek() {
   if (SP == -1) {
-    eprintf(stderr, "Exiting due to illegal memory access on empty stack underflow.\n");
-    escape(ERROR_OVERFLOW);
+    eprintf(OVERFLOW_ERR,stderr,"peek on empty stack");
+    escape(OVERFLOW_ERR);
   }
 
   return STACK[SP];
 }
 
-void vm_restore_rval(rval_t* r) {
-  *r = vm_pop();
-  return;
-}
 
-void vm_restore_rcons(rcons_t** r) {
-  *r = _tocons(vm_pop());
-  return;
-}
-
-void vm_restore_rsym(rsym_t** r) {
-  *r = _tosym(vm_pop());
-  return;
-}
-
-rval_t vm_analyze(rval_t x) {
-  int32_t t = typecode(x);
-  int32_t i;
+val_t vm_analyze(val_t x) {
+  int_t t = typecode(x);
+  int_t i;
   switch (t) {
   case TYPECODE_SYM:
     return EV_VARIABLE;
   case TYPECODE_CONS:
-    for (i=0;i < NUM_FORMS;i++) {
-      if (_tosym(_tocons(x)->car) == BUILTIN_FORMS[i]) return i;
+    for (i=0; i < NUM_FORMS; i++) {
+      if (car_(x) == BUILTIN_FORMS[i]) return i;
+
+      else x = cdr_(x);
+      
+      if (!iscons(x)) break;
+    }
+
+    if (i < NUM_FORMS) {
+      return EV_LITERAL;  // read dotted lists as literals
     }
 
     return EV_APPLY;
@@ -181,7 +111,7 @@ rval_t vm_analyze(rval_t x) {
 }
 
 
-void vm_eval() {
+val_t vm_eval(val_t x, cons_t* e) {
   static void* labels[] = { &&ev_setv, &&ev_quote, &&ev_let, &&ev_do,
                             &&ev_label, &&ev_fn, &&ev_macro, &&ev_if,
                             &&ev_literal, &&ev_variable, &&ev_assign,
@@ -192,53 +122,66 @@ void vm_eval() {
 			    &&ev_sequence_loop, &&ev_setv_assign, &&ev_let_argloop,
 			    &&ev_label_apply, &&ev_if_branch };
 
-  int32_t argcheck;
+  static void* errors[] = { &&everr_unknown, &&everr_type, &&everr_value, &&everr_arity,
+                            &&everr_unbound, &&everr_overflow, &&everr_io, &&everr_nullptr,
+			    &&everr_syntax, &&everr_index };
 
-  goto *labels[vm_analyze(EXP)];
+  int_t argcheck;
+
+  dispatch(EXP);
+
+ everr_unknown: everr_type: everr_value: everr_arity:
+ everr_unbound: everr_overflow: everr_io: everr_nullptr:
+ everr_syntax: everr_index:
+  clearerr();
+  failv(ERRORCODE,NONE,"The error caused evaluation to fail.");
 
  ev_return:
   restore(CONTINUE);
   restore(ENV);
 
-  goto *labels[CONTINUE];
+  jump(CONTINUE);
 
  ev_macro_return:
   restore(CONTINUE);
   restore(ENV);
   EXP = VAL;
 
-  goto *labels[vm_analyze(EXP)];
-  
+  dispatch(EXP);
+
  ev_literal:  // save the current values of every register and install e in the environment
   VAL = EXP;
-  goto *labels[CONTINUE];
+  jump(CONTINUE);
 
  ev_variable:
-  VAL = vm_get_sym_env(_tosym(EXP),ENV);
-
-  goto *labels[CONTINUE];
+  VAL = env_get(EXP,ENV);
+  errbranch(VAL == NONE,UNBOUND_ERR);
+  jump(CONTINUE);
 
  ev_quote:
-  VAL = _car(_cdr(EXP));
-
-  goto *labels[CONTINUE];
+  VAL = *cxr(EXP,AD);
+  errbranch(checkerr(VAL),ERRORCODE);
+  jump(CONTINUE);
 
  ev_setv:
   save(CONTINUE);
   CONTINUE = EV_SETV_ASSIGN;
-  EXP = _car(_cdr(_cdr(EXP)));
+  EXP = *cxr(EXP,ADD);
+  errbranch(checkerr(EXP),ERRORCODE);
   save(EXP);
-  EXP = _car(_cdr(EXP));
+  EXP = *cxr(EXP,AD);
+  errbranch(checkerr(EXP),ERRORCODE);
 
-  goto *labels[vm_analyze(EXP)];
+  dispatch(EXP);
 
  ev_setv_assign:
-  NAME = _tosym(VAL);
-  vm_put_sym_env(NAME,ENV);  // add the name to the environment if it doesn't exist already
+  errbranch(!issym(VAL), TYPE_ERR);
+  NAME = VAL;
+  env_put(NAME,ENV);                // add the name to the environment if it doesn't exist already
   restore(EXP);
   restore(CONTINUE);
 
-  goto ev_assign;
+  jump(EV_ASSIGN);
 
  ev_assign:
   save(NAME);
@@ -247,19 +190,22 @@ void vm_eval() {
 
   CONTINUE = EV_ASSIGN_END;
 
-  goto *labels[vm_analyze(EXP)];
+  dispatch(EXP);
 
  ev_assign_end:
   restore(CONTINUE);
   restore(NAME);
   restore(ENV);
-  vm_set_sym_env(NAME, VAL, ENV);
 
-  goto *labels[CONTINUE];
+  env_set(NAME, VAL, toc_(ENV));
+  
+  jump(CONTINUE);
 
  ev_macro:
-  UNEV = _tocons(_car(_cdr(_cdr(EXP))));
-  EXP = _car(_cdr(EXP));
+  RX = cxr(EXP,ADD);
+  errbranch(checkerr(RX),ERRORCODE);
+  EXP = 
+  RY = cxr(EXP,AD);
   VAL = tagproc(vm_new_proc(EXP, tagcons(ENV), tagcons(UNEV), CALLMODE_MACRO, BODYTYPE_EXPR));
   
   goto *labels[CONTINUE];

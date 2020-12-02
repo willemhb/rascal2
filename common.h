@@ -15,213 +15,284 @@
 
 /* core type  and variable definitions go in this module */
 /* typedefs for core builtins */
-typedef uintptr_t rval_t;
+typedef uintptr_t val_t;
+typedef intptr_t  ival_t;
 typedef unsigned char uchr_t;
 typedef char chr_t;
-typedef uchr_t rbvec_t;
-typedef int32_t rint_t;
-typedef struct _rtype_t rtype_t;
-typedef struct _robj_t robj_t;
-typedef struct _rcons_t rcons_t;
-typedef struct _rsym_t rsym_t;
-typedef struct _rproc_t rproc_t;
-typedef struct _rprim_t rprim_t;
-typedef struct _rstr_t rstr_t;
-typedef struct _rport_t rport_t;
+typedef chr_t str_t;                 // refers to memory in the lisp heap allocated for str
+typedef int int_t;
+typedef uint32_t uint_t;
+typedef struct type_t type_t;
+typedef struct obj_t obj_t;
+typedef struct cons_t cons_t;
+typedef cons_t list_t;               // conses and lists are structurally identical, but
+typedef struct sym_t sym_t;          // functions that require a list_t* should be verified
+typedef struct proc_t proc_t;        // as lists before being passed to those functions.
+typedef struct tab_t tab_t;          // a generic table type
+typedef struct port_t port_t;
 
+/* 
+   the generic object head contains a 32-bit meta-field (different types can use this for 
+   different purposes), 3 1-bit boolean flags, and a type field giving the typecode for
+   objects of that type. If a type requires non-boolean flags, these can be stored in
+   meta.
+ 
+*/
 
 #define OBJECT_HEAD     \
   struct {              \
-    uint64_t meta : 32; \
-    uint64_t type : 29; \
-    uint64_t flags : 3; \
+    val_t meta : 32;    \
+    val_t type : 29;    \
+    val_t flags_2 : 1;  \
+    val_t flags_1 : 1;	\
+    val_t flags_0 : 1;  \
   } head
 
-struct _robj_t {
+struct obj_t {
   OBJECT_HEAD;
 };
 
-struct _rcons_t {
-  rval_t car;
-  rval_t cdr;
+/* These macros provide the core api for working with values  and object types */
+
+#define tag(v)           ((v) & 0x7)
+#define untag(v)         (((val_t)(v)) & ~0x7ul)
+#define val(v)           (((val_t)(v)) >> 32)
+#define ptr(v)           ((void*)untag(v))
+#define cptr(v)          ((void*)(v))
+#define tagptr(p,t)      (((val_t)(p)) | (t))
+#define tagval(v,t)      ((((val_t)(v)) << 32) | (t))
+#define heapobj(v)       ((uchr_t*)ptr(v))
+#define obj(v)           ((obj_t*)ptr(v))
+
+/* object head accessors */
+#define head(o)          (((obj_t*)(o))->head)
+#define meta_(o)          (((obj_t*)(o))->head.meta)
+#define type_(o)         (((obj_t*)(o))->head.type)   
+#define flags_(obj,off)    (((obj_t*)(obj))->head.flags_##off)
+
+
+/* 
+   
+   Below are the definitions of the core builtin object types, any special flags or enums they
+   use, and alias macros for their flag and meta fields (If they have an object head). Flag
+   accessors are prefixed with fl_.
+
+ */
+
+struct cons_t {
+  val_t car;
+  val_t cdr;
 };
 
-struct _rsym_t {
+
+
+struct sym_t {
   OBJECT_HEAD;
-  rval_t binding;
-  rsym_t* left;
-  rsym_t* right;
+  val_t binding;
   chr_t name[1];
 };
 
-struct _rtype_t {
+
+typedef enum sym_fl {
+  VARIABLE=0,
+  CONSTANT,
+} sym_fl;
+
+
+#define fl_const(s)       ((s)->head.flags_0)
+#define isconst(s)        (fl_const(s) == CONSTANT)
+
+
+/*
+
+  The long term goal is to implement tables as AVL trees, since the metadata required for
+  this can be stored in the existing object head with no additional space requirements,
+  but this is not an immediate priority. 
+
+  Right now tables are just symbol tables, but they're written to allow arbitrary types
+  to be used. Future plans include coming up with a proper generic interface to allow tab_t
+  to be used as a proper dictionary type.
+  
+ */
+
+struct tab_t {
+  OBJECT_HEAD;
+  val_t key;
+  val_t binding;
+  tab_t* left;
+  tab_t* right;
+};
+
+
+struct type_t {
     OBJECT_HEAD;          // pointer to the type, also holds flags on the data field
     struct {
-      uint64_t base_size : 16;
-      uint64_t lowtag : 1;
-      uint64_t free : 46;
+      val_t base_size : 16;  // the minimum size (in bytes) for objects of this type.
+      val_t val_lowtag : 3;  // the lowtag that should be used for objects of this type.
+      val_t atomic : 1;      // can values be used as a table key?
+      val_t callable : 1;    // can values be used as a function?
+      val_t free : 44;
     } flags;
-    rproc_t* tp_constructor;
+  /* the rascal-callable constructor */
+    proc_t* tp_constructor;
+    // the vm-callable C function to allocate and initialize a new value (NULL for direct data)
     void*  (*tp_new)();
-    uint32_t (*tp_sizeof)();
-    chr_t* (*tp_write)(rval_t, FILE*);
-    rsym_t* tp_name;
+    // the vm-callable C function to get a value's size in bytes (can be NULL)
+    uint_t (*tp_sizeof)();
+    // the vm-callable C function to print or write a value of this type
+    void (*tp_prn)(val_t, port_t*);
+    // the authoritative type name
+    sym_t* tp_name;
 };
 
-struct _rstr_t {
+#define typecode_self(t)  meta_(t)
+#define fl_base_size(t)   ((t)->flags.base_size)
+#define fl_val_lowtag(t)  ((t)->flags.val_lowtag)
+#define fl_atomic(t)      ((t)->flags.atomic)
+#define fl_callable(t)    ((t)->flags.callable)
+
+
+struct proc_t {
   OBJECT_HEAD;
-  chr_t chars[1];
+  val_t formals;
+  val_t env;
+  val_t body;
 };
 
 
-struct _rproc_t {
-  OBJECT_HEAD;
-  rval_t formals;      // this is a list of argument names for lambdas and a list of argument types for builtins
-  rval_t env;          // this is nil for builtins and list of local environments for lambdas
-  rval_t body;         // either a builtin function or 
-};
+typedef enum proc_fl {
+  CALLMODE_FUNC,
+  CALLMODE_MACRO,
+  BODYTYPE_EXPR=0,
+  BODYTYPE_CFNC,
+  VARGS_TRUE=0,
+  VARGS_FALSE,
+} proc_fl;
 
-struct _rport_t {
+/* procedure accessors */
+
+#define argco_(p)          meta_(p)
+#define callmode_(p)       flags_(p,0)
+#define bodytype_(p)       flags_(p,1)
+#define vargs_(p)          flags_(p,2)
+
+struct port_t {
   OBJECT_HEAD;
   FILE* stream;
   chr_t chrbuff[8];
 };
 
-/* 
-   tag values 
+typedef enum port_fl {
+  BINARY_PORT,
+  TEXT_PORT,
+  READ=1,
+  WRITE=1,
+} port_fl;
 
-   the lowtag comprises the 2 least significant bits of an rval_t. They indicate how the value should be interpreted.
-   the lowtags are direct (small integers, floats, etc.), objptr (pointer to an object head with additional type information),
-   strptr (a pointer to a null-terminated array of bytes), or a pointer to a cons.
-
-   the widetag is the 3rd least-significant bit, and represents type-specific metadata. The widetag belongs to the type, ie,
-   objects are not free to set the widetags of their constituent members. The widetag is used to, for example, indicate whether
-   a cons is a valid list, or whether a bytestring represents binary or textual data.
- 
-*/
-
-enum {
-  LOWTAG_DIRECT=0b00,
-  LOWTAG_OBJPTR=0b01,
-  LOWTAG_BVECPTR=0b10,
-  LOWTAG_CONSPTR=0b11,
-  DEFAULT_WTAG=0b0,
-};
+#define fl_iotype(p)  flags(p,0)
+#define fl_read(p)    flags(p,1)
+#define fl_write(p)   flags(p,2)
 
 /* 
+   tag values
 
-   for convenience, the full tags for common builtin types and variants are given below
-   these are not unambiguous typecodes, but they are to aid in creating tags and for distinguishing
-   cons pointers from list pointers. They are NOT a proper type test.
+   The lowtag indicates how to read the type and data on a val_t. Direct objects store their
+   type information and data in the word itself. Object pointers point to an object head 
+   with a type field. Cons pointers point to a cons cell that may or may not also be a list
+   (the list invariant has not been checked). It has a type of cons. A list pointer points to
+   a cons whose list invariant has been checked. It has a type of cons. A string pointer
+   points to a utf-8 encoded null terminated bytestring. It has a type of str. 
+
+   The lowtag consobj, listobj, and strobj are pointers to objects whose only data member is
+   a cons (stored directly), a list pointer (stored as a pointer), or an array of bytes that
+   may be binary data or text data (the bytes begin immediately after the object head). These
+   are included to allow future subtyping of any builtin type with a consistent API.
+
+   Other C types can be represented, but cannot be represented directly as val_t for memory
+   safety (port_t is an example).
+   
+   The tag and typecode system is set up so that the special value NIL is identical to the
+   C value NULL (NIL has a lowtag of LOWTAG_DIRECT and its typecode is 0).
 */
 
-enum {
-  TAG_INT=LOWTAG_DIRECT,
-  TAG_TYPE=LOWTAG_OBJPTR,
-  TAG_CONS=LOWTAG_CONSPTR,
-  TAG_SYM=LOWTAG_OBJPTR,
-  TAG_SYM_INTERNED=0x4 | LOWTAG_OBJPTR,
-  TAG_SYM_UNINTERNED=LOWTAG_OBJPTR,
-  TAG_BVEC=LOWTAG_BVECPTR,
-  TAG_BVEC_BIN=0x4 | LOWTAG_BVECPTR,
-  TAG_BVEC_TXT=LOWTAG_BVECPTR,
-  TAG_STR=LOWTAG_OBJPTR,
-  TAG_LIST= 0x4 | LOWTAG_CONSPTR,
-  TAG_PROC=LOWTAG_OBJPTR,
-  TAG_PORT=LOWTAG_OBJPTR,
-};
+typedef enum ltag_t {
+  LOWTAG_DIRECT  =0b000,
+  LOWTAG_CONSPTR =0b001,
+  LOWTAG_LISTPTR =0b010,
+  LOWTAG_STRPTR  =0b011,
+  LOWTAG_OBJPTR  =0b100,
+  LOWTAG_CONSOBJ =0b101,
+  LOWTAG_LISTOBJ =0b110,
+  LOWTAG_STROBJ  =0b111,
+} ltag_t;
 
 enum {
   TYPECODE_NIL,
-  TYPECODE_NONE,
-  TYPECODE_TYPE,
-  TYPECODE_BVEC,
   TYPECODE_CONS,
-  TYPECODE_SYM,
+  TYPECODE_NONE,
   TYPECODE_STR,
+  TYPECODE_TYPE,
+  TYPECODE_SYM,
+  TYPECODE_TAB,
   TYPECODE_PROC,
   TYPECODE_PORT,
   TYPECODE_INT,
   NUM_BUILTIN_TYPES,
 };
 
-chr_t* BUILTIN_TYPENAMES[] = { "nil", "none", "type", "bvec", "cons",
-                                "sym", "str", "proc", "port", "int"};
+chr_t* BUILTIN_TYPENAMES[] = { "nil", "cons", "none", "str", "type",
+                               "sym", "tab", "proc", "port", "int",
+                             };
 
-#define ltag(v)          ((v) & 0x3)
-#define wtag(v)          (((v) & 0x4)>>2)
-#define tag(v)           ((v) & 0x7)
-#define untag(v)         ((v) & ~0x7ul)
-#define val(v)           ((v) >> 32)
-#define ptr(v)           ((void*)untag(v))
-#define cptr(v)          ((void*)(v))
-#define tagptr(p,t)      (((rval_t)(p)) | (t))
-#define tagval(v,t)      ((rval_t)(((v) << 32) | (t)))
-#define hobj(v)          ((uchr_t*)ptr(v))
-#define obj(v)           ((robj_t*)ptr(v))
+
+// these generic macros are intended to simplify tagging values
+#define tagv(v) tagval(v,\
+		       _Generic((v),\
+				int_t:LOWTAG_DIRECT))
+
+#define tagp(p) tagptr(p,\
+		       _Generic((p),\
+				sym_t*:LOWTAG_STROBJ,\
+				str_t*:LOWTAG_STRPTR,\
+				default:LOWTAG_OBJPTR))
 
 /* memory */
 #define AS_BYTES 8
 #define AS_WORDS 1
 
-uchr_t *HEAP, *EXTRA, *FREE, *FROMSPACE, *TOSPACE, *TOFREE;
-int64_t HEAPSIZE;
+uchr_t *HEAP, *EXTRA, *FREE, *FROMSPACE, *TOSPACE;
+ival_t HEAPSIZE;
 bool GROWHEAP;
-uint32_t TYPECOUNTER, NUMTYPES;
-rtype_t** TYPES;
+uint_t TYPECOUNTER, NUMTYPES;
+type_t** TYPES;
 
 #define ALLOCATIONS() (FREE - HEAP)
 
 /* evaluator */
 // the stack
-rval_t* STACK;
-int32_t STACKSIZE, SP;
+val_t* STACK;
+int_t STACKSIZE, SP;
 
-// the evaluator core to reduce errors and unnecessary checking, these registers are typed
-rval_t EXP, VAL, CONTINUE;
-rsym_t* NAME;               // special register for holding unevaluated names
-rcons_t* ARGL, *UNEV, *ENV;
-rproc_t* PROC;
+// The core evaluator registers
+val_t EXP, VAL, CONTINUE, NAME, ENV, UNEV, ARGL;
+val_t* RX, * RY, * RZ;  // intermediate result registers
 
-rsym_t* GLOBALS;
-
+tab_t* GLOBALS;
 // special constants
-// The lowtags and typecodes are laid out so that NIL, including correct lowtag and typecode, has
-// a value of 0, allowing it to be interpreted as C 'NULL'.
-rval_t NIL = 0, NONE = TYPECODE_NONE << 3, OK, T;
+// The lowtags and typecodes are laid out so that NIL, including correct lowtag and typecode,
+// is equal to C 'NULL'
+// FPTR is a special value used to indicate that this cell has been moved to the new heap
+// during garbage collection. 
+val_t NIL = 0, NONE = TYPECODE_NONE << 3, OK, T, FPTR = LOWTAG_CONSPTR;
 
 #define isnil(v)  ((v) == NIL)
 #define isnone(v) ((v) == NONE)
 #define isok(v)   ((v) == OK)
 #define istrue(v) ((v) == T)
+#define isfptr(v) ((v) == FPTR)
+
 
 /* basic error handling definitions */
-
-jmp_buf SAFETY;
-int32_t ERRORCODE;
-
-enum {
-  ERROR_TYPE=1,
-  ERROR_ARITY,
-  ERROR_VARNAME,
-  ERROR_OVERFLOW,
-  ERROR_NIL,
-  ERROR_NONE,
-  ERROR_FUNAPP,
-  ERROR_IO,
-  ERROR_NULLPTR,
-};
-
-
-const chr_t* ERRNAMES[] = {NULL, "TYPE", "ARITY", "VARNAME", "OVERFLOW",
-                           "NIL", "NONE", "FUNAPP", "NULLPTR"};
-
-
-#define eprintf(file, fmt, args...) fprintf(file, "%s: %d: %s: ", __FILE__, __LINE__, __func__); fprintf(file, fmt, ##args)
-#define localerror() int32_t error = setjmp(SAFETY)
-#define savepoint() setjmp(SAFETY)
-#define escape(e) longjmp(SAFETY, e)
-
 
 /* end common.h */
 #endif

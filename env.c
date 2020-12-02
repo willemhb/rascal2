@@ -1,132 +1,247 @@
 #include "env.h"
 
 
-rsym_t* vm_new_sym(chr_t* s, hash_t h, uint32_t interned) {
-  uint32_t slen = strlen(s);
-  uchr_t* obj = vm_allocate(sizeof(rsym_t) + slen);
-  rsym_t* sobj = (rsym_t*)obj;
+inline ival_t _vhash(val_t v) {
+  sym_t* s = tosym(v);
 
-  sobj->head.meta = h;
-  sobj->head.type = TYPECODE_SYM;
-  sobj->head.flags = 0;
-  setinterned(sobj, interned);
-  sobj->binding = NONE;
-  sobj->left = sobj->right = NULL;
-
-  return sobj;
-}
-
-uint32_t vm_sym_sizeof(rsym_t* s) {
-  return sizeof(rsym_t) + strlen(s->name);
-}
-
-static int32_t ord(int32_t x, int32_t y) {
-  if (x < y) {
-    return -1;
-  } else if (x > y) {
-    return 1;
-  } else {
-    return 0;
-  }
-}
-
-static int32_t sym_cmp(chr_t* sx, hash_t hx, chr_t* sy, hash_t hy) {
-  return ord(hx,hy) ? : strcmp(sx,sy);
-}
-
-
-rsym_t** vm_sym_lookup(chr_t* sx, hash_t hx, rsym_t** symtab) {
-  if (hx == 0) {
-    hx = hash_string(sx);
+  if (checkerr(s)) {
+    failv(TYPE_ERR,-2,"Expected sym, got %s",typename(v));
   }
 
-  rsym_t** curr = symtab;
-  
-  while (*curr) {
-    hash_t hy = symhash(*curr);
-    chr_t* sy = (*curr)->name;
-    int32_t result = sym_cmp(sx,hx,sy,hy);
+  return hash_(s);
+}
 
-    if (result < 0) {
-      curr = &(*curr)->left;
-    } else if (result > 0) {
-      curr = &(*curr)->right;
-    } else {
-      break;
-    }
+inline ival_t _shash(sym_t* s) {
+  if (s == NULL) return seterr(NULLPTR_ERR,-2);
+  return hash_(s);
+}
+
+inline chr_t* _vname(val_t v) {
+  sym_t* s = tosym(v);
+
+  if (checkerr(s)) {
+    failv(TYPE_ERR,NULL,"expected sym, got %s", typename(v));
   }
   
-  return curr;
+  return name_(s);
 }
 
-rsym_t* vm_assoc_sym(chr_t* sx, hash_t hx, rsym_t* symtab) {
-  rsym_t* local = symtab;
-  rsym_t** result = vm_sym_lookup(sx,hx,&local);
-  return *result;
+inline chr_t* _sname(sym_t* s) {
+  if (s == NULL) return seterr(NULLPTR_ERR, NULL); 
+  return name_(s);
 }
 
-rsym_t* vm_intern_str(chr_t* string, rsym_t** st) {
-  if (st == NULL) st = &GLOBALS;
-  hash_t h = hash_string(string);
-  rsym_t** result = vm_sym_lookup(string, h, st);
-
-  if (*result == NULL) {
-    *result = vm_new_sym(string, h,SYMFLAG_INTERNED);
-  }
-
-  return *result;
+// table accessors
+inline val_t* _vkey(val_t v) {
+  if (!istab(v)) return seterr(TYPE_ERR,NULL);
+  return &(key_(totab_(v)));
 }
 
-// environments
-rcons_t* vm_new_env(rval_t n, rcons_t* b, rcons_t* parent) {
-  // TODO: validate n and b
-  rcons_t* locals = vm_new_cons(n, tagcons(b), REQUIRE_CONS);
-  rcons_t* out = vm_new_list(tagcons(locals), tagcons(parent));
+inline val_t* _tkey(tab_t* t) {
+  if (t == NULL) return seterr(NULLPTR_ERR,NULL);
+
+  return &(key_(t));
+}
+
+inline val_t* _vbinding(val_t v) {
+  if (!istab(v)) return seterr(TYPE_ERR,NULL);
+
+  return &(binding_(totab_(v)));
+}
+
+
+inline val_t* _tbinding(tab_t* t) {
+  if (t == NULL) return seterr(NULLPTR_ERR,NULL);
+
+  return &(binding_(t));
+}
+
+
+inline tab_t** _vleft(val_t v) {
+  if (!istab(v)) return seterr(TYPE_ERR,NULL);
+
+  return &(left_(totab_(v)));
+}
+
+
+inline tab_t** _tleft(tab_t* t) {
+  if (t == NULL) return seterr(NULLPTR_ERR,NULL);
+
+  return &(left_(t));
+}
+
+
+inline tab_t** _vright(val_t v) {
+  if (!istab(v)) return seterr(TYPE_ERR,NULL);
+
+  return &(right_(totab_(v)));
+}
+
+
+inline tab_t** _tright(tab_t* t) {
+  if (t == NULL) return seterr(NULLPTR_ERR,NULL);
+
+  return &(right_(t));
+}
+
+
+/* simple comparison helpers */
+inline int_t cmpv(val_t x, val_t y) {
+  if (x < y) return -1;
+  else if (x > y) return 1;
+  else return 0;
+}
+
+inline int_t cmps(chr_t* sx, chr_t* sy) {
+  int_t r = strcmp(sx,sy);
+  if (r < 0) return -1;
+  else if (r > 0) return 1;
+  else return 0;
+}
+
+inline int_t cmph(hash_t x, hash_t y) {
+  if (x < y) return -1;
+  else if (x > y) return 1;
+  else return 0;
+}
+
+inline int_t cmphs(chr_t* sx, uint_t hx, chr_t* sy, uint_t hy) {
+  return cmph(hx,hy) ? : cmps(sx,sy);
+}
+
+inline int_t cmpq(sym_t* sx, sym_t* sy) {
+  return cmphs(name_(sx),hash_(sx),name_(sy),hash_(sy));
+}
+
+sym_t* new_sym(chr_t* s) {
+  tab_t* cell = intern_string(s,&GLOBALS);
+  sym_t* out = tosym_(key_(cell));
   return out;
 }
 
-rcons_t* vm_assoc_sym_env(rsym_t* v, rcons_t* e) {
-  rcons_t* cr;
+tab_t* intern_string(chr_t* s, tab_t** st) {
+  hash_t h = hash_string(s);
+  tab_t** curr = st;
 
-  if (e == NULL) {
-    return NULL;
+  while (*curr) {
+    sym_t* currk = tosym_(key_(*curr));
+    int_t c = cmphs(s,h, name_(currk), hash_(currk));
+
+    if (c < 0) curr = &(left_(*curr));
+    else if (c > 0) curr = &(right_(*curr));
+    else break;
   }
 
-  cr = vm_assoc_list(tagsym(v), _tocons(e->car));
-    if (cr == NULL) {
-      return vm_assoc_sym_env(v, _tocons(e->cdr));
-	} else {
-      return cr;
+  if (*curr == NULL) {
+    tab_t* new_t = new_tab();
+    sym_t* new_s = (sym_t*)vm_allocate(sizeof(sym_t)+strlen(s));
+    strcpy(name_(new_s),s);
+    hash_(new_s) = h;
+    type_(new_s) = TYPECODE_SYM;
+    key_(new_t) = tagp(new_s);
+    *curr = new_t;
+  }
+
+  return *curr;
+}
+
+/* tab_search takes advantage of the interning by doing a simple pointer comparison */
+tab_t* tab_search(val_t k, tab_t* tab) {
+  tab_t* curr = tab;
+
+  while (curr) {
+    val_t currk = (curr)->key;
+    int_t order = cmpv(k, currk);
+
+    if (order < 0) curr = curr->left;
+    else if (order > 1) curr = curr->right;
+    else break;
     }
+
+  return curr;
 }
 
-rval_t vm_get_sym_env(rsym_t* v, rcons_t* e) {
-  rcons_t* result = vm_assoc_sym_env(v,e);
+tab_t* tab_setkey(val_t k, val_t v, tab_t* t) {
+  tab_t* node = tab_search(k,t);
 
-  if (result == NULL) return v->binding;
-  else return result->car;
-}
-
-
-// put_sym_env adds a symbol to the environment
-void vm_put_sym_env(rsym_t* s, rcons_t* e) {
-  if (e == NULL) return;
-
-    rcons_t* names = _tocons(e->car);
-    rcons_t* bindings = _tocons(e->cdr);
-
-    vm_list_append(&names,tagsym(s));
-    vm_list_append(&bindings,NIL);
-}
-
-// set_sym_env updates the value of an existing symbol
-void vm_set_sym_env(rsym_t* s, rval_t v, rcons_t* e) {
-  if (e == NULL) {
-    s->binding = v;
-    return;
+  if (checkerr(node)) return seterr(VALUE_ERR,NULL);
+ 
+  if (isconst(node) && node->binding != NONE) {
+    failv(TYPE_ERR,NULL,"Tried to reset constant binding");
   }
 
-  rcons_t* result = vm_assoc_env(s, e);
-  result->car = v;
-  return;
+  node->binding = v;
+  return node;
+}
+
+tab_t* new_tab() {
+  tab_t* out = (tab_t*)vm_allocate(sizeof(tab_t));
+  type_(out) = TYPECODE_TAB;
+  meta_(out) = TYPECODE_SYM;        // the types of the keys in this table
+  key_(out) = NONE;                      // for now, all keys must have the same type,
+  binding_(out) = NONE;                  // and the only allowed type is symbol
+  left_(out) = right_(out) = NULL;
+  fl_const(out) = CONSTANT;
+  
+  return out;
+}
+
+
+bool isenvnames(val_t n) {
+  if (issym(n)) return true;
+  if (isnil(n)) return true;
+  if (!iscons(n)) return false;
+
+  while (iscons(n)) {
+    if (!issym(car_(n))) {
+      return false;
+    }
+    n = cdr_(n);
+  }
+
+  return isnil(n) || issym(n);
+}
+
+// environments
+cons_t* new_env(val_t n, val_t b, val_t p) {
+  // validate arguments
+  if (!isenvnames(n)) {
+    failv(TYPE_ERR,NULL,"Invalid environment names");
+  }
+
+  if (!islist(b)) {
+    failv(TYPE_ERR,NULL,"Invalid environment bindings");
+  }
+  
+  if (!islist(p)) {
+    failv(TYPE_ERR,NULL,"Invalid environment tail");
+}
+
+  val_t locals = cons(n, b);
+  cons_t* out = new_cons(locals, p);
+  return out;
+}
+
+val_t env_assoc(val_t v, val_t e) {
+  /* 
+     env can safely assume that v is a symbol, e is an 
+     and the local environment frame is correctly formed.
+   
+  */
+  if (e == NIL) {
+    tab_t* global = tab_search(v,GLOBALS);
+    return tagp(global);
+
+  } else {
+    val_t ln = *cxr(e,AA);
+    val_t lb = *cxr(e,AD);
+    
+    while (iscons(ln)) {
+      if (car_(ln) == v) return lb;
+      else ln = cdr_(ln); lb = cdr_(lb);
+    }
+
+    if (ln == v) return lb;
+    else return env_assoc(v, cdr_(e));
+  }
 }
