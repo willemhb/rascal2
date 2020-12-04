@@ -8,6 +8,9 @@ rascal
 # ignore core dumps
 core.*
 
+# ignore the contents of log
+log/*
+
 # Prerequisites
 *.d
 
