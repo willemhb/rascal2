@@ -1,4 +1,4 @@
-#include "builtin.h"
+#include "rascal.h"
 
 #define ADD(x,y)   (x + y)
 #define SUB(x,y)   (x - y)
@@ -19,40 +19,6 @@ DESCRIBE_ARITHMETIC(r_eqnum,EQL,cbooltorbool)
 DESCRIBE_ARITHMETIC(r_lt,LT,cbooltorbool)
 DESCRIBE_PREDICATE(r_nilp,isnil)
 DESCRIBE_PREDICATE(r_nonep,isnone)
-
-
-static const chr_t* builtin_forms[] = {"setv", "quote", "let",
-                                       "do", "fn", "macro", "if" };
-
-
-
-const chr_t* builtin_fnames[] = {
-  "+", "-", "*", "/", "rem",                  // arithmetic
-  "<", "=", "eq?", "nil?","none?",            // predicates and comparison
-  "cmp", "type", "isa?", "size", "cons",
-  "sym", "str", "int", "car", "cdr",
-  "rplca", "rplcd", "open", "close", "read",
-  "prn", "reads", "load", "eval", "apply",         
-};
-
-static const int_t builtin_argcos[] = {
-  2, 2, 2, 2, 2,
-  2, 2, 2, 1, 1,
-  2, 1, 2, 1, 2,
-  1, 1, 1, 1, 1,
-  2, 2, 2, 1, 1,
-  2, 1, 1, 2, 2,
-};
-
-static const void* builtin_callables[] = {
-  r_add, r_sub, r_mul, r_div, r_rem,
-  r_lt, r_eqnum, r_eqp,				       
-  r_nilp, r_nonep, r_cmp, r_typeof,
-  r_isa, r_size, cons, r_sym,
-  r_str, r_int, car, cdr, r_rplca, r_rplcd,
-  open, close, read, prn, reads,
-  load, r_eval, r_apply,
-};
 
 
 inline val_t r_isa(val_t v, val_t t) {
@@ -87,7 +53,6 @@ val_t r_rplcd(val_t cd,val_t d) {
   car_(c) = d;
   return cd;
 }
-
 
 val_t r_eval(val_t x,val_t e) {
   return eval_expr(-1,x,e);
@@ -159,13 +124,43 @@ void _new_builtin_function(const chr_t* fname, int_t argc, const void* f) {
 }
 
 void init_builtin_functions() {
+  static const chr_t* builtin_fnames[] = {
+    "+", "-", "*", "/", "rem",                  // arithmetic
+    "<", "=", "eq?", "nil?","none?",            // predicates and comparison
+    "cmp", "type", "isa?", "size", "cons",
+    "sym", "str", "int", "car", "cdr",
+    "rplca", "rplcd", "open", "close", "read",
+    "prn", "reads", "load", "eval", "apply",         
+  };
+
+  static const int_t builtin_argcos[] = {
+    2, 2, 2, 2, 2,
+    2, 2, 2, 1, 1,
+    2, 1, 2, 1, 2,
+    1, 1, 1, 1, 1,
+    2, 2, 2, 1, 1,
+    2, 1, 1, 2, 2,
+  };
+
+  static const void* builtin_callables[] = {
+    r_add, r_sub, r_mul, r_div, r_rem,
+    r_lt, r_eqnum, r_eqp, r_nilp, r_nonep,
+    r_cmp, r_typeof, r_isa, r_size, cons, r_sym,
+    r_str, r_int, car, cdr, r_rplca, r_rplcd,
+    open, close, read, prn, reads,
+    load, r_eval, r_apply,
+};
+
   for (int_t i = 0; i < NUM_BUILTINS; i++) {
     _new_builtin_function(builtin_fnames[i],builtin_argcos[i],builtin_callables[i]);
   }
   return;
 }
 
-void init_forms() {
+void init_forms() {  
+  static const chr_t* builtin_forms[] = {"setv", "quote", "let",
+                                         "do", "fn", "macro", "if" };
+
   for (int_t i = EV_SETV; i < NUM_FORMS; i++) {
     val_t new_form = _new_self_evaluating(builtin_forms[i]);
     BUILTIN_FORMS[i] = new_form;
@@ -394,13 +389,23 @@ type_t* inttype = (type_t*)malloc(sizeof(type_t));
 }
 
 void bootstrap_rascal() {
+  fprintf(stdout, "Initialization begining.\n");
+  init_log();
+  fprintf(stdout, "Log initialized.\n");
   init_heap();
+  fprintf(stdout,"Heap initialized.\n");
   init_types();
+  fprintf(stdout,"Types initialized.\n");
   init_registers();
+  fprintf(stdout,"Registers initialized.\n");
   init_builtin_types();
+  fprintf(stdout,"Builtin types initialized.\n");
   init_builtin_functions();
+  fprintf(stdout,"Builtin functions initialized.\n");
   init_special_variables();
+  fprintf(stdout,"Special variables initialized.\n");
   init_forms();
+  fprintf(stdout,"Special forms initialized.\n");
 
   fprintf(stdout,"Initialization succeeded.\n");
 }

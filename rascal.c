@@ -1,9 +1,5 @@
-#include "common.h"
-#include "obj.h"
-#include "env.h"
-#include "eval.h"
-#include "txtio.h"
-#include "builtin.h"
+#include "rascal.h"
+
 
 void repl() {
   while (true) {
@@ -24,7 +20,7 @@ void repl() {
 
 int main(int argc, char** argv) {
   bootstrap_rascal();
-  fprintf(stdout, "Welcome to rascal2 v 0.0.1.0");
+  fprintf(stdout, "Welcome to rascal2 v 0.0.1.0\n");
   repl();
   return 0;
 }

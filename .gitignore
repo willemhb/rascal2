@@ -2,6 +2,12 @@
 *.el
 *~
 
+# don't track the actual executables
+rascal
+
+# ignore core dumps
+core.*
+
 # Prerequisites
 *.d
 

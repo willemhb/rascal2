@@ -1,13 +1,21 @@
-#include "eval.h"
+#include "rascal.h"
 
 /* working with procedure types */
 val_t new_proc(val_t formals, val_t env, val_t body, proc_fl callmode, proc_fl bodytype) {
-  if (!isenvnames(formals) && bodytype != BODYTYPE_CFNC) {
+  int_t argco;
+  proc_fl vargs;
+  
+  if (bodytype == BODYTYPE_CFNC) {
+    argco = formals;
+    vargs = VARGS_FALSE;
+    formals = NIL;
+  } else if (!isenvnames(formals)) {
     escapef(TYPE_ERR, stderr, "Malformed argument list.");
+  } else {
+    argco = ncells(formals);
+    vargs = islist(formals) ? VARGS_FALSE : VARGS_TRUE;
   }
- 
-  int_t argco = bodytype == BODYTYPE_CFNC ? toint_(formals) : ncells(formals);
-  proc_fl vargs = islist(formals) && bodytype == BODYTYPE_EXPR ? VARGS_TRUE : VARGS_FALSE;
+
   proc_t* obj = (proc_t*)vm_allocate(sizeof(proc_t));
 
   // initialize
@@ -16,7 +24,7 @@ val_t new_proc(val_t formals, val_t env, val_t body, proc_fl callmode, proc_fl b
   callmode_(obj) = callmode;
   bodytype_(obj) = bodytype;
   vargs_(obj) = vargs;
-  formals_(obj) = bodytype == BODYTYPE_EXPR ? formals : NONE;
+  formals_(obj) = formals;
   env_(obj) = env;
   body_(obj) = body;
 

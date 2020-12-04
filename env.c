@@ -1,4 +1,4 @@
-#include "env.h"
+#include "rascal.h"
 
 
 inline val_t hash(val_t v) {
@@ -31,16 +31,16 @@ inline int_t cmphs(chr_t* sx, uint_t hx, chr_t* sy, uint_t hy) {
   return cmpv(hx,hy) ? : cmps(sx,sy);
 }
 
-static tab_t* intern_string(const chr_t* s, tab_t** st);
+static dict_t* intern_string(const chr_t* s, dict_t** st);
 
 val_t sym(chr_t* s) {
-  tab_t* cell = intern_string(s,&GLOBALS);
+  dict_t* cell = intern_string(s,&GLOBALS);
   sym_t* out = tosym_(key_(cell));
   return tagp(out);
 }
 
 sym_t* intern_builtin(const chr_t* s, val_t b) {
-  tab_t* cell = intern_string(s,&GLOBALS);
+  dict_t* cell = intern_string(s,&GLOBALS);
   
   if (istype(binding_(cell))) { // types are initialized before builtins, so we need to 
     totype_(binding_(cell))->tp_new = b; // make sure not to overwrite the type with its
@@ -52,9 +52,9 @@ sym_t* intern_builtin(const chr_t* s, val_t b) {
   return g_name;
 }
 
-static tab_t* intern_string(const chr_t* s, tab_t** st) {
+static dict_t* intern_string(const chr_t* s, dict_t** st) {
   hash_t h = hash_string(s);
-  tab_t** curr = st;
+  dict_t** curr = st;
 
   while (*curr) {
     sym_t* currk = tosym_(key_(*curr));
@@ -66,7 +66,7 @@ static tab_t* intern_string(const chr_t* s, tab_t** st) {
   }
 
   if (*curr == NULL) {
-    tab_t* new_t = new_tab();
+    dict_t* new_t = new_dict();
     sym_t* new_s = (sym_t*)vm_allocate(sizeof(sym_t)+strlen(s));
     strcpy(name_(new_s),s);
     hash_(new_s) = h;
@@ -78,9 +78,9 @@ static tab_t* intern_string(const chr_t* s, tab_t** st) {
   return *curr;
 }
 
-/* tab_search takes advantage of the interning by doing a simple pointer comparison */
-tab_t* tab_search(val_t k, tab_t* tab) {
-  tab_t* curr = tab;
+/* dict_search takes advantage of the interning by doing a simple pointer comparison */
+dict_t* dict_search(val_t k, dict_t* dict) {
+  dict_t* curr = dict;
 
   while (curr) {
     val_t currk = (curr)->key;
@@ -94,30 +94,30 @@ tab_t* tab_search(val_t k, tab_t* tab) {
   return curr;
 }
 
-val_t tab_set(val_t k, val_t v, val_t t) {
-  tab_t* root = totab(t);
-  tab_t* node = tab_search(k, root);
+val_t dict_set(val_t k, val_t v, val_t t) {
+  dict_t* root = todict(t);
+  dict_t* node = dict_search(k, root);
 
-  if (node == NULL) { escapef(NULLPTR_ERR,stderr,"Unexpected null pointer in tab_set."); }
+  if (node == NULL) { escapef(NULLPTR_ERR,stderr,"Unexpected null pointer in dict_set."); }
 
   binding_(node) = v;
   
   return v;
 }
 
-val_t tab_get(val_t k, val_t t) {
-  tab_t* root = totab(t);
-  tab_t* node = tab_search(k, root);
+val_t dict_get(val_t k, val_t t) {
+  dict_t* root = todict(t);
+  dict_t* node = dict_search(k, root);
 
-  if (node == NULL) { escapef(NULLPTR_ERR,stderr,"Unexpected null pointer in tab_get."); }
+  if (node == NULL) { escapef(NULLPTR_ERR,stderr,"Unexpected null pointer in dict_get."); }
 
   return binding_(node);
 }
 
-tab_t* new_tab() {
-  tab_t* out = (tab_t*)vm_allocate(sizeof(tab_t));
-  type_(out) = TYPECODE_TAB;
-  meta_(out) = TYPECODE_SYM;        // the types of the keys in this table
+dict_t* new_dict() {
+  dict_t* out = (dict_t*)vm_allocate(sizeof(dict_t));
+  type_(out) = TYPECODE_DICT;
+  meta_(out) = TYPECODE_SYM;        // the types of the keys in this dictle
   key_(out) = NONE;                      // for now, all keys must have the same type,
   binding_(out) = NONE;                  // and the only allowed type is symbol
   left_(out) = right_(out) = NULL;
@@ -154,7 +154,7 @@ val_t env_assoc(val_t v, val_t e) {
    
   */
   if (e == NIL) {
-    tab_t* global = tab_search(v,GLOBALS);
+    dict_t* global = dict_search(v,GLOBALS);
     return tagp(global);
 
   } else {
@@ -195,7 +195,7 @@ val_t env_put(val_t n, val_t e) {
 
 val_t env_set(val_t n, val_t v, val_t e) {
   if (e == NIL) {
-    return tab_set(n,v,tagp(GLOBALS));
+    return dict_set(n,v,tagp(GLOBALS));
   } else {
     val_t loc_b = env_assoc(n,e);
     car_(loc_b) = v;

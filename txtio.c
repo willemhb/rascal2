@@ -1,5 +1,4 @@
-#include <ctype.h>
-#include "txtio.h"
+#include "rascal.h"
 
 /* text and io types */
 

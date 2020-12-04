@@ -1,4 +1,4 @@
-#include "obj.h"
+#include "rascal.h"
 
 /* type utilities */
 uint_t typecode(val_t v) {

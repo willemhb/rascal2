@@ -1,5 +1,13 @@
-#include "error.h"
+#include "rascal.h"
 
+
+inline const chr_t* get_errname(int_t ec) {
+static const chr_t* errnames[] = { "OK", "TYPE", "VALUE", "ARITY", "UNBOUND",
+                                   "OVERFLOW", "IO", "NULLPTR", "SYNTAX", "INDEX",
+				   "APPLICATION", };
+
+ return errnames[ec];
+}
 
 void init_log() {
   static chr_t timebuffer[256];
