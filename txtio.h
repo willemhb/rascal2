@@ -5,9 +5,7 @@
 
 #include "common.h"
 #include "obj.h"
-#include "cons.h"
 #include "env.h"
-#include "mem.h"
 #include "eval.h"
 
 /* 
@@ -16,35 +14,51 @@
 
  */
 
-/* interface to builtin text and io types */
-port_t* vm_new_port(chr_t*,chr_t*);
-port_t* _vm_new_port(FILE*);               // private function for initializing stdin, stdout
-uint_t vm_port_sizeof(val_t);              // etc
-bstr_t* vm_new_bstr(chr_t*);
-uint_t vm_bstr_len(bstr_t*);
-uint_t vm_bstr_sizeof(val_t);
+#define stream_(p) FAST_ACCESSOR_MACRO(p,port_t*,stream)
+#define buffer_(p) FAST_ACCESSOR_MACRO(p,port_t*,chrbuff)
 
-/* printers for builtin types */
+/* 
+   interface to builtin text and io types 
 
-#define MAX_LIST_ELEMENTS 100
+   the functions below represent the high level io interface. Open and close
+   create and clean up ports, read gets s-expressions from a port, and prn writes
+   s-expressions to ports. 
 
-void vm_prn_int(val_t,port_t*);
-void vm_pn_type(val_t,port_t*);
-void vm_prn_bstr(val_t,port_t*);
-void vm_prn_cons(val_t,port_t*);
-void vm_prn_sym(val_t,port_t*);
-void vm_prn_proc(val_t,port_t*);
+   The low level interface makes calls to the underlying C FILE* API, mostly using
+   putc, getc, puts, and gets.
 
-/* low level port api */
+ */
+
+val_t  open(val_t,val_t);
+val_t  close(val_t);
+val_t  read(val_t);
+val_t  prn(val_t,val_t);
+val_t reads(val_t);
+val_t load(val_t);
+
+val_t  _std_port(val_t,FILE*);  // for initializing stdin, stdout, etc.
+port_t* vm_open(chr_t*,chr_t*);
+int_t vm_close(port_t*);
+val_t vm_read(port_t*);
+void vm_prn(val_t,port_t*);
 chr_t vm_getc(port_t*);
 int_t vm_putc(port_t*, chr_t);
 int_t vm_peekc(port_t*);
 int_t vm_puts(port_t*, chr_t*);
-chr_t* vm_gets(port_t*,int_t);
-port_t* vm_open(chr_t*, chr_t*);
-int vm_close(port_t*);
-bool vm_eof(port_t*);
+str_t* vm_gets(port_t*,int_t);
 
+str_t* new_str(chr_t*);
+
+/* printers for builtin types */
+
+#define MAX_LIST_ELEMENTS 100 // to avoid 
+
+void prn_int(val_t,port_t*);
+void prn_type(val_t,port_t*);
+void prn_bstr(val_t,port_t*);
+void prn_cons(val_t,port_t*);
+void prn_sym(val_t,port_t*);
+void prn_proc(val_t,port_t*);
 
 /* tokenizing */
 typedef enum _r_tok_t {
@@ -56,7 +70,7 @@ typedef enum _r_tok_t {
   TOK_STR,
   TOK_SYM,
   TOK_EOF,
-  TOK_DONE,
+  TOK_NONE,
   TOK_STXERR,
 } r_tok_t;
 
@@ -64,19 +78,14 @@ typedef enum _r_tok_t {
 chr_t TOKBUFF[TOKBUFF_SIZE];
 chr_t STXERR[512];
 int_t TOKPTR = 0;
-r_tok_t TOKTYPE;
-r_tok_t vm_get_toktype(port_t*);
-r_tok_t vm_get_token(port_t*);
+r_tok_t TOKTYPE = TOK_NONE;
 
-val_t vm_read_expr(port_t*);
-cons_t* vm_read_sexpr(port_t*);
-val_t vm_read_str(port_t*);
-val_t vm_read_literal(port_t*);
+#define take() TOKTYPE = TOK_NONE
 
-/* core reader procedures */
-void vm_prn(val_t,port_t*);
-val_t vm_read(port_t*);
-void vm_load(port_t*);
-void vm_repl(void);
+/* reader internal */
+r_tok_t get_token(port_t*);
+val_t read_expr(port_t*);
+val_t read_sexpr(port_t*);
+
 /* end txtio.h */
 #endif

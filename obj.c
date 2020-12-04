@@ -50,17 +50,28 @@ inline bool callable(val_t v) {
   return t == TYPECODE_TYPE || t == TYPECODE_PROC;
 }
 
-uint_t obj_size(val_t v) {
-  uint_t t = tag(v);
+
+int_t vm_size(val_t v) {
+  int_t t = typecode(v);
   switch (t) {
-  case LOWTAG_DIRECT:
+  case TYPECODE_NIL:
+  case TYPECODE_NONE:
+  case TYPECODE_INT:
     return 8;
-  case LOWTAG_CONSPTR:
-  case LOWTAG_LISTPTR:
-    return 16;
-  case LOWTAG_STRPTR:
+  case TYPECODE_CONS:
+    return sizeof(cons_t);
+  case TYPECODE_PORT:
+    return sizeof(port_t);
+  case TYPECODE_PROC:
+    return sizeof(proc_t);
+  case TYPECODE_TYPE:
+    return sizeof(type_t);
+  case TYPECODE_TAB:
+    return sizeof(tab_t);
+  case TYPECODE_STR:
     return strlen(tostr_(v)) + 1;
-  case LOWTAG_OBJPTR:
+  case TYPECODE_SYM:
+    return sizeof(sym_t) + strlen(tosym_(v)->name) + 1;
   default:
     return type_of(v)->tp_sizeof(v);
   }
@@ -292,109 +303,110 @@ type_t* new_type() {
 
 
 /* cons api */
-inline bool _vislist(val_t v) {
+inline bool islist(val_t v) {
   if (isnil(v)) return true;
   else return tag(v) == LOWTAG_LISTPTR;
 }
 
-inline bool _cislist(cons_t* c) {
-  return c == NULL || _vislist(c->cdr);
-}
 
 // tagging helper
-val_t tagc(cons_t* c) {
-  if (islist(c)) {
+inline val_t tagc(cons_t* c) {
+  if (c == NULL) {
+    escapef(NULLPTR_ERR,stderr,"Unexpected null pointer in tagc.");
+  }
+  
+  if (islist(cdr_(c))) {
     return tagptr(c, LOWTAG_LISTPTR);
   } else {
     return tagptr(c, LOWTAG_CONSPTR);
   }
 }
 
-inline val_t* _ccar(cons_t* c) {
-  if (c == NULL) return seterr(NULLPTR_ERR, NULL);
-  return &car_(c);
+inline val_t car(val_t v) {
+  cons_t* c = toc(v);
+  return car_(c);
 }
 
-inline val_t* _vcar(val_t c) {
-  if (!iscons(c)) return seterr(TYPE_ERR,NULL);
-  return &car_(c);
+inline val_t cdr(val_t v) {
+  cons_t* c = toc(v);
+  return cdr_(c);
 }
+
 
 /* generic cons accessor */
-inline val_t* _ccxr(cons_t* c, cons_sel s) {
-  val_t* out; cons_t* curr = c;
+inline val_t cxr(val_t c, cons_sel s) {
+  val_t curr = c;
   
   if (s == -1) {
-    while (true) {
-      if (curr == NULL) return seterr(NULLPTR_ERR, NULL);
-
-      if (!hastail(curr)) break;
-
-      curr = toc(cdr_(curr));
+    while (iscons(curr) && iscons(cdr_(curr))) {
+      curr = cdr_(curr);
     }
 
-    return &cdr_(curr);
+    return curr;
   }
 
   while (s != 1) {
-    if (curr == NULL) return seterr(NULLPTR_ERR, NULL);
+    if (!iscons(curr)) {
+      escapef(TYPE_ERR,stderr,"Tried to take cdr of non-cons with type %s", typename(curr));
+    }
+
     if (s & 0x1) {
-      curr = toc(cdr_(curr));
+      curr = cdr(curr);
     } else {
-      curr = toc(car_(curr));
+      curr = car(curr);
     }
     s >>= 1;
   }
-
-  if (checkerr(curr)) {
-    return seterr(NULLPTR_ERR, NULL);
-  }
   
-  out = &car_(curr);
-  return out;
+  return curr;
 }
 
-inline val_t* _vcxr(val_t v, cons_sel s) {
-  cons_t* c = toc(v);
-
-  if (checkerr(c)) return seterr(ERRORCODE,NULL);
-
-  return _ccxr(c,s);
-}
-
-cons_t* new_cons(val_t ca, val_t cd) {
+inline val_t cons(val_t ca, val_t cd) {
   cons_t* obj = (cons_t*)vm_allocate(16);
 
   obj->car = ca;
   obj->cdr = cd;
 
-  return obj;
+  return tagc(obj);
 }
 
-inline val_t cons(val_t ca, val_t cd) {
-  return tagc(new_cons(ca,cd));
-}
-
-inline int_t _vncells(val_t v) {
-  cons_t* c = toc(v);
-  if (checkerr(c)) {
-    failv(TYPE_ERR,-2,"Expected cons, got %s",typename(v));
-  }
-  return _cncells(c);
-}
-
-inline int_t _cncells(cons_t* c) {
-  if (c == NULL) {
+inline int_t ncells(val_t c) {
+  if (c == NIL) {
     return 0;
   }
 
   int_t count = 0;
   
-  while (hastail(c)) count++;
+  while (isc(c)) count++;
 
-  if (cdr_(c) == NIL) {
+  if (c == NIL) {
     return count;
   } else {
     return count + 1;
   }
+}
+
+val_t append(val_t* c, val_t v) {
+  if (c == NULL) escapef(NULLPTR_ERR,stderr,"Unexpected null pointer in append.");
+  else if (!islist(*c)) escapef(TYPE_ERR,stderr,"Attempt to append to non-list.");
+
+  while (iscons(*c)) c = &cdr_(*c);
+
+  *c = cons(v,NIL);
+  
+  return *c;
+}
+
+
+val_t extend(val_t* cx, val_t cy) {
+  if (cx == NULL) escapef(NULLPTR_ERR,stderr,"Unexpected null pointer.");
+  if (!islist(*cx) || !islist(cy)) escapef(TYPE_ERR,stderr,"Unexpected null pointer.");
+
+  val_t* out = cx;
+
+  while (iscons(*cx)) cx = &cdr_(*cx);
+  
+  *cx = cy;
+
+  return *out;
 }

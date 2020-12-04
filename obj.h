@@ -39,6 +39,7 @@ type_t* type_of(val_t);
 chr_t* typename(val_t);
 bool callable(val_t);
 bool atomic(val_t);
+int_t vm_size(val_t);
 
 /* convenience macros for casting and testing */
 // unsafe casts to builtin types
@@ -58,25 +59,7 @@ bool atomic(val_t);
    The object API uses _Generic extensively, in order to enable usage of the same set
    of accessors for functions that work with val_t and functions that work with C types.
 
-   Every object has a safe and fast accessor for each of its non writeable non-head fields.
-
-   The safe accessor dispatches to a function that, for val_t, checks that the value is of
-   that type, setting the global ERRORCODE if it doesn't and returning a sentinel, and for
-   C types checks that the value is non-null (setting the global ERRORCODE if it is).  Safe
-   accessors return a pointer to the field on success and a NULL pointer on failure.
-
-   The fast accessor expands to a C structure access, with or without a cast depending on
-   whether the value is a val_t. The fast accessor can be used safely if, eg, it's known that
-   the same value recently passed a typecheck, or is known to be non-null. In general, it
-   shouldn't be used unless the appropriate validation has already been performed.
-
-   Each C type also has safe and unsafe casting macros. The safe caster checks the typecode
-   first and returns NULL if the typecode is incorrect.
-
-   In general, object API functions should accept val_t arguments, perform any checks that are necessary,
-   fail if any of those checks fail (setting the value of ERRORCODE), and return a pointer to the desired
-   field if they succeed. Functions that take non val_t arguments may be used internally (symbol interning
-   is a good example), but shouldn't be accessed externally.
+   Public fields have safe and fast accessors. 
 
 */
 
@@ -92,9 +75,10 @@ bool atomic(val_t);
 #define isa(v,t)  (typecode(v) == (t))
 
 
-#define SAFECAST_MACRO(v,test,cast,sentinel)			\
-  ({ val_t _v_ = v ;                                            \
-    test(_v_) ? cast(_v_) : seterr(TYPE_ERR,sentinel);		\
+#define SAFECAST_MACRO(v,tp)			                                                 \
+  ({ val_t _v_ = v ;                                                                             \
+    if (!is##tp(_v_)) { escapef(TYPE_ERR,stdout,"Expected type %s, got %s",#tp,typename(v)); } ; \
+    to##tp##_(_v_) ;								                 \
   })
 
 #define FAST_ACCESSOR_MACRO(v,ctype,f)                 \
@@ -102,22 +86,15 @@ bool atomic(val_t);
 	    val_t:(ctype)ptr(v),		       \
 	    ctype:v)->f)
 
-#define SAFE_ACCESSOR_MACRO(v,ctype,ctype_acc,val_acc) \
-  _Generic((v),                                        \
-	   ctype:ctype_acc,			       \
-	   val_t:val_acc)(v)
+#define totype(v)   SAFECAST_MACRO(v,type)
+#define tosym(v)    SAFECAST_MACRO(v,sym)
+#define totab(v)    SAFECAST_MACRO(v,tab)
+#define tocons(v)   SAFECAST_MACRO(v,cons)
+#define tostr(v)    SAFECAST_MACRO(v,str)
+#define toproc(v)   SAFECAST_MACRO(v,proc)
+#define toport(v)   SAFECAST_MACRO(v,port)
+#define toint(v)    SAFECAST_MACRO(v,int)
 
-
-#define totype(v)   SAFECAST_MACRO(v,istype,totype_,NULL)
-#define tosym(v)    SAFECAST_MACRO(v,issym,tosym_,NULL)
-#define totab(v)    SAFECAST_MACRO(v,istab,totab_,NULL)
-#define tocons(v)   SAFECAST_MACRO(v,iscons,tocons_,NULL)
-#define tostr(v)    SAFECAST_MACRO(v,isstr,tostr_,NULL)
-#define toproc(v)   SAFECAST_MACRO(v,isproc,toproc_,NULL)
-#define toport(v)   SAFECAST_MACRO(v,isport,toport_,NULL)
-#define toint(v)    SAFECAST_MACRO(v,isint,toint_,-2)
-
-/* direct data */
 /* memory management */
 
 /*
@@ -143,18 +120,13 @@ bool atomic(val_t);
 #define HEAP_ALIGNSIZE 8       // the alignment of the heap
 #define CHECK_RESIZE() (FREE - HEAP) > (RAM_LOAD_FACTOR * HEAPSIZE) ? true : false
 
-/* general memory helpers */
+
 int_t align_heap(uchr_t**,uchr_t*);
-
-/* memory initialization */
-void init_heap();
-void init_types();
-
 void gc();
 val_t gc_trace(val_t*);
 uchr_t* gc_copy(uchr_t*,int_t);
 uchr_t* vm_allocate(int_t);
-type_t* new_type();                    // location
+type_t* new_type();                         
 
 /* memory bounds checking and overflow checking */
 bool heap_limit(uint_t);
@@ -198,34 +170,24 @@ typedef enum cons_sel {
   DDDD=0b11111,
 } cons_sel;
 
+#define car_(v) FAST_ACCESSOR_MACRO(v,cons_t*,car)
+#define cdr_(v) FAST_ACCESSOR_MACRO(v,cons_t*,cdr)
+
 /* the vm api for conses */
 val_t tagc(cons_t*);                // because conses are represented by two lowtags, they
-val_t* _vcar(val_t);                // have a special tagging function
-val_t* _ccar(cons_t*);
-val_t* _vcdr(val_t);
-val_t* _ccdr(cons_t*);
-bool _vislist(val_t);
-bool _cislist(cons_t*);
-val_t* _vcxr(val_t,cons_sel);
-val_t* _ccxr(cons_t*,cons_sel);
-int_t _vncells(val_t);
-int_t _cncells(cons_t*);
-cons_t* new_cons(val_t,val_t);
+val_t car(val_t);                // have a special tagging function
+val_t cdr(val_t);
+bool  islist(val_t);
+val_t cxr(val_t,cons_sel);
+int_t ncells(val_t);
 val_t cons(val_t,val_t);
+val_t append(val_t*,val_t);
+val_t extend(val_t*,val_t);
+val_t append_env(val_t*,val_t);
 
 #define isc iscons
 #define toc tocons
 #define toc_ tocons_
-
-#define islist(v) _Generic((v),val_t:_vislist,cons_t*:_cislist)(v)
-#define car(v)     SAFE_ACCESSOR_MACRO(v,cons_t*,_ccar,_vcar)
-#define cdr(v)     SAFE_ACCESSOR_MACRO(v,cons_t*,_ccdr,_vcdr)
-#define car_(v)    FAST_ACCESSOR_MACRO(v,cons_t*,car)
-#define cdr_(v)    FAST_ACCESSOR_MACRO(v,cons_t*,cdr)
-#define cxr(c,s)   _Generic((c),val_t:_vcxr,cons_t*:_ccxr)(c,s)
-#define ncells(v)  _Generic((v),val_t:_vncells,cons_t*:_cncells)(v)
-#define hastail(c) isc(cdr_(c))
-
 
 /* end obj.h */
 #endif

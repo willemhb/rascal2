@@ -2,50 +2,73 @@
 #include "txtio.h"
 
 /* text and io types */
-port_t* vm_new_port(chr_t* fname, chr_t* readmode) {
+val_t open(val_t fnm, val_t md) {
+  str_t* fname = tostr(fnm);
+  str_t* mode = tostr(md);
+
+  return tagp(vm_open(fname,mode));
+}
+
+val_t close(val_t p) {
+  port_t* p_ = toport(p);
+  int_t status = vm_close(p_);
+  if (status == EOF) {
+    escapef(IO_ERR,stderr,"EOF returned from fclose.");
+  } else {
+    return OK;
+  }
+}
+
+val_t prn(val_t v, val_t p) {
+  port_t* strm = toport(p);
+
+  vm_prn(v,strm);
+
+  return OK;
+}
+
+
+port_t* vm_open(str_t* fname, str_t* readmode) {
   FILE* f = fopen(fname,readmode);
-  uchr_t* obj = vm_allocate(24);
-  port_t* pobj = (port_t*)obj;
 
-  pobj->head.type = TYPECODE_PORT;
-  pobj->stream = f;
+  if (f == NULL) {
+    escapef(IO_ERR,stderr,"Failed to open %s",fname);
+  }
+  
+  port_t* obj = (port_t*)vm_allocate(24);
 
-  for (int i = 0; i < 8; i++) {
-    pobj->chrbuff[i] = '\0';
+  type_(obj) = TYPECODE_PORT;
+  stream_(obj) = f;
+  fl_iotype(obj) = TEXT_PORT;  // worry about binary later
+
+  if (streq(readmode,"r")) {
+    fl_readable(obj) = 1;
+    fl_writable(obj) = 0;
+  } else if (streq(readmode,"w")) {
+    fl_readable(obj) = 0;
+    fl_writable(obj) = 1;
+  } else {
+    fl_readable(obj) = 1;
+    fl_writable(obj) = 1;
   }
 
-  // save a reference to the port to close unclosed files during cleanup 
-  sym_t* interned = vm_new_gensym(fname,SYMFLAG_INTERNED);
-  interned->binding = tagport(pobj);
+  for (int i = 0; i < 8; i++) {
+    buffer_(obj)[i] = '\0';
+  }
 
-  return pobj;
+  return obj;
 }
 
-uint_t vm_port_sizeof(val_t v) {
-  return 24;
+int_t vm_close(port_t* p) {
+  fl_writable(p) = 0;
+  fl_readable(p) = 0;
+  fflush(stream_(p));
+
+  return fclose(stream_(p));
 }
 
-bstr_t* vm_new_bstr(chr_t* chrs) {
-  int_t nb = strlen(chrs);
-  uchr_t* obj = vm_allocate(sizeof(bstr_t) + nb);
-  bstr_t* bobj = (bstr_t*)obj;
-  bobj->head.meta = nb;
-  bobj->head.type = TYPECODE_BSTR;
-  memcpy(bobj->chars,chrs,nb);
-
-  return bobj;
-}
-
-uint_t vm_bstr_len(bstr_t* bs) {
-  return bs->head.meta;
-}
-
-uint_t vm_bstr_sizeof(val_t bstr) {
-  return 8 + vm_bstr_len(_tobstr(bstr));
-}
-
-void vm_prn_int(val_t v,port_t* p) {
-  int_t i = _toint(v);
+void prn_int(val_t v,port_t* p) {
+  int_t i = toint(v);
   if (!i) {
     vm_putc(p, '0');
     return;
@@ -71,38 +94,32 @@ void vm_prn_int(val_t v,port_t* p) {
   return;
 }
 
-void vm_prn_type(val_t t,port_t* p) {
+void prn_type(val_t t,port_t* p) {
   vm_puts(p, "#type:");
-  vm_puts(p, _totype(t)->tp_name->name);
+  vm_puts(p, totype(t)->tp_name->name);
 }
 
-void vm_prn_bvec(val_t b, port_t* p) {
-  vm_puts(p, "b\"");
-  vm_puts(p, (chr_t*)_tobvec(b));
+void prn_str(val_t s, port_t* p) {
+  str_t* str = tostr_(s);
   vm_putc(p, '"');
-  return;
-}
-
-void vm_prn_bstr(val_t s, port_t* p) {
-  vm_putc(p, '"');
-  vm_puts(p, _tobstr(s)->chars);
+  vm_puts(p, str);
   vm_putc(p, '"');
 }
 
-void vm_prn_cons(val_t c, port_t* p) {
+void prn_cons(val_t c, port_t* p) {
   vm_putc(p, '(');
 
   if (!islist(c)) {
-    vm_prn(_car(c), p);
+    vm_prn(car_(c), p);
     vm_puts(p, " . ");
-    vm_prn(_cdr(c), p);
+    vm_prn(cdr_(c), p);
 
   } else {
     int_t i;
     for (i = 0; i < MAX_LIST_ELEMENTS; i++) {
       if (isnil(c)) break;
-      vm_prn(_car(c), p);
-      c = _cdr(c);
+      vm_prn(car_(c), p);
+      c = cdr_(c);
       if (isnil(c)) break; // no space between the closing paren and the last element
       vm_putc(p, ' ');
     }
@@ -116,11 +133,11 @@ void vm_prn_cons(val_t c, port_t* p) {
 }
 
 
-void vm_prn_proc(val_t pr,port_t* p) {
+void prn_proc(val_t pr,port_t* p) {
   chr_t* ptype;
-  proc_t* proc = _toproc(pr);
-  if (callmode(proc) == CALLMODE_MACRO) ptype = "macro";
-  else if (bodytype(proc) == BODYTYPE_CFNC) ptype = "builtin";
+  proc_t* proc = toproc_(pr);
+  if (callmode_(proc) == CALLMODE_MACRO) ptype = "macro";
+  else if (bodytype_(proc) == BODYTYPE_CFNC) ptype = "builtin";
   else ptype = "function";
   vm_puts(p, "#proc:");
   vm_puts(p, ptype);
@@ -128,10 +145,14 @@ void vm_prn_proc(val_t pr,port_t* p) {
 }
 
 void vm_prn_sym(val_t s, port_t* p) {
-  vm_puts(p,_tosym(s)->name);
+  vm_puts(p,name_(s));
 }
 
 void vm_prn(val_t v, port_t* p) {
+  if (!isopen(p)) {
+    escapef(IO_ERR,stderr,"Printing to a closed port.");
+  }
+  
   switch(typecode(v)) {
   case TYPECODE_NIL:
     vm_puts(p,"nil");
@@ -143,7 +164,7 @@ void vm_prn(val_t v, port_t* p) {
     vm_puts(p, "#port");
     break;
   default:
-    type(v)->tp_prn(v,p);
+    type_of(v)->tp_prn(v,p);
     break;
   }
 
@@ -152,15 +173,20 @@ void vm_prn(val_t v, port_t* p) {
 
 /* low level port api (calls to the underlying C api) */
 chr_t vm_getc(port_t* p) {
-  return fgetc(p->stream);
+  chr_t out = fgetc(stream_(p));
+  return out;
 }
 
 int_t vm_putc(port_t* p, chr_t c) {
-  return fputc(c, p->stream);
+  int_t out = fputc(c,stream_(p));
+  if (out == EOF) {
+    escapef(IO_ERR,stderr,"EOF");
+  }
+  return out;
 }
 
 int_t vm_peekc(port_t* p) {
-  int_t next = fgetc(p->stream);
+ chr_t next = fgetc(stream_(p));
 
   if (next == EOF) {
     return next;
@@ -171,6 +197,7 @@ int_t vm_peekc(port_t* p) {
 }
 
 chr_t* vm_gets(port_t* p, int_t i) {
+  
   uchr_t* buffer = vm_allocate(i + 1);
   return fgets((chr_t*)buffer, i + 1, p->stream);
 }
@@ -179,41 +206,24 @@ int_t vm_puts(port_t* p, chr_t* s) {
   return fputs(s, p->stream);
 }
 
-int_t vm_close(port_t* p) {
-  return fclose(p->stream);
-}
-
 bool vm_eof(port_t* p) {
   return feof(p->stream);
 }
 
-
 /* tokenizer */
 static void accumtok(chr_t c) {
   if (TOKPTR == TOKBUFF_SIZE - 1) {
-    eprintf(stderr, "Token too long.\n");
-    escape(ERROR_OVERFLOW);
+    escapef(IO_ERR,stderr, "Token too long.\n");
   } else {
     TOKBUFF[TOKPTR++] = c;
   }
 }
 
-static val_t vm_new_form(form_enum_t form, val_t body) {
-  val_t f = tagsym(BUILTIN_FORMS[form]);
-  cons_t* c = vm_new_list(f, NIL);
-  
-  if (isnil(body)) {
-    // catch empty forms and raise errors
-    eprintf(stderr, "Void form %s\n.", BUILTIN_FORMS[f]->name);
-    escape(ERROR_SYNTAX);
+r_tok_t get_token(port_t* p) {
+  if (TOKTYPE != TOK_NONE) {
+    return TOKTYPE;
   }
-
-  vm_list_append(&c,body);
-
-  return tagcons(c);
-}
-
-r_tok_t vm_get_token(port_t* p) {
+  
   int_t ch;
   while ((ch = vm_getc(p)) != EOF) {
     if (isspace(ch)) continue;
@@ -247,7 +257,6 @@ r_tok_t vm_get_token(port_t* p) {
 	TOKTYPE = TOK_STXERR;
 	sprintf(STXERR, "Unexpected end of string");
       } else {
-	accumtok('\0');
 	TOKTYPE = TOK_STR;
       }
       break;
@@ -277,58 +286,98 @@ r_tok_t vm_get_token(port_t* p) {
       }
       break;
    }
+
+    accumtok('\0');
     return TOKTYPE;
   }
 
-val_t vm_read_expr(port_t* p) {
-  r_tok_t t = vm_get_token(p);
+
+val_t read_expr(port_t* p) {
+  r_tok_t t = get_token(p);
   int_t numval;
-  
+
   switch (t) {
   case TOK_NUM:
     numval = atoi(TOKBUFF);
+    take();
     return tagval(numval, (TYPECODE_INT << 3) | LOWTAG_DIRECT);
 
   case TOK_STR:
-    return tagstr(vm_new_bstr(TOKBUFF));
+    take();
+    return tagp(new_str(TOKBUFF));
 
   case TOK_SYM:
-    return tagsym(vm_intern_str(TOKBUFF,&GLOBALS));
+    take();
+    return sym(TOKBUFF);
 
   case TOK_LPAR:
-    return tagcons(vm_read_sexpr(p));
+    take();
+    return read_sexpr(p);
 
   case TOK_QUOT:
+    take();
     // transform 'x to (quote x)
-    return vm_new_form(QUOTE_F, vm_read_expr());
+    return cons(sym("quote"), cons(read_expr(p),NIL));
+
+  case TOK_DOT:
+  case TOK_RPAR:
   case TOK_STXERR:
-    eprintf(stderr, "Exiting due to syntax error: %s.\n", STXERR);
-    escape(ERROR_SYNTAX);
+  default:
+    escapef(SYNTAX_ERR,stderr, "%s", STXERR);
 
   case TOK_EOF:
-    return TOK_DONE;
-
+    return NIL;
   }
 }
 
+val_t read_cons(port_t* p) {
+  val_t out = NIL, curr;
+  get_token(p);
+
+  while (TOKTYPE != TOK_RPAR && TOKTYPE != TOK_DOT && TOKTYPE != TOK_STXERR) {
+    curr = read_expr(p);
+    append(&out,curr);
+  }
+  
+  if (TOKTYPE == TOK_STXERR) escapef(SYNTAX_ERR,stderr,"%s",STXERR);
+  if (TOKTYPE == TOK_DOT) {
+    val_t* tail = &out;
+    while (iscons(*tail)) tail = &cdr_(*tail);
+
+    *tail = read_expr(p);
+    if (get_token(p) != TOK_RPAR) escapef(SYNTAX_ERR,stderr,"Malformed dotted list.");
+  }
+
+  take(); // clear the right paren token
+  return out;
+}
+
+
 /* core reader procedures */
-val_t vm_read(port_t*);
-val_t vm_read_literal(port_t*);
-val_t vm_read_sexpr(port_t*);
+val_t vm_read(port_t* p) {
+  if (!(fl_readable(p) || fl_writable(p))) {
+    return NONE;
+  } else if (vm_eof(p)) {
+    return NONE;
+  } else {
+    return read_expr(p);
+  }
+}
 
 /* 
    for simplicity, right now load just reads a file wrapped in a 'do' expression and 
    evalutes it.
  
 */
+
 void vm_load(port_t* p) {
-  cons_t* out = vm_new_list(tagsym(BUILTIN_FORMS[EV_DO]), NIL);
-  while (!vm_eof(p)) {
-    val_t exp = vm_read_expr(p);
-    vm_list_append(&out, exp);
+  val_t out = cons(sym("do"),NIL);
+
+  while (true) {
+    val_t exp = vm_read(p);
+    if (vm_eof(p)) break;     // avoid appending the 'None' returned when vm_read encounters EOF
+    append(&out, exp);        //this can be written be better
   }
 
-  // call vm_eval here
+  eval_expr(-1,out,NIL);
 }
-
-void vm_repl(void);

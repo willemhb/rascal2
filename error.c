@@ -1,31 +1,5 @@
 #include "error.h"
 
-inline bool _checkerr_null(void* v) {
-  return (v == NULL) && ERRORCODE;
-}
-
-inline bool _checkerr_val(val_t v) {
-  return (v == NONE) && ERRORCODE;
-}
-
-inline bool _checkerr_int(int_t i) {
-  return (i == -2) && ERRORCODE;
-}
-
-inline int_t _seterr_int(int_t i, int_t s) {
-  ERRORCODE = i;
-  return s;
-}
-
-inline val_t _seterr_none(int_t i, val_t s) {
-  ERRORCODE = i;
-  return s;
-}
-
-inline void* _seterr_null(int_t i, void* s) {
-  ERRORCODE = i;
-  return s;
-}
 
 void init_log() {
   static chr_t timebuffer[256];

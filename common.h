@@ -134,9 +134,8 @@ struct type_t {
       val_t free : 44;
     } flags;
   /* the rascal-callable constructor */
-    proc_t* tp_constructor;
+    val_t tp_new;
     // the vm-callable C function to allocate and initialize a new value (NULL for direct data)
-    void*  (*tp_new)();
     // the vm-callable C function to get a value's size in bytes (can be NULL)
     uint_t (*tp_sizeof)();
     // the vm-callable C function to print or write a value of this type
@@ -189,9 +188,10 @@ typedef enum port_fl {
   WRITE=1,
 } port_fl;
 
-#define fl_iotype(p)  flags(p,0)
-#define fl_read(p)    flags(p,1)
-#define fl_write(p)   flags(p,2)
+#define fl_iotype(p)      ((p)->head.flags_0)
+#define fl_readable(p)    ((p)->head.flags_1)
+#define fl_writable(p)    ((p)->head.flags_2)
+#define isopen(p)         (fl_writable(p) || fl_readable(p))
 
 /* 
    tag values
@@ -246,9 +246,8 @@ chr_t* BUILTIN_TYPENAMES[] = { "nil", "cons", "none", "str", "type",
 
 
 // these generic macros are intended to simplify tagging values
-#define tagv(v) tagval(v,\
-		       _Generic((v),\
-				int_t:LOWTAG_DIRECT))
+#define tagv(v) _Generic((v), \
+			 int_t:tagval(v, (TYPECODE_INT << 3) || LOWTAG_DIRECT))
 
 #define tagp(p) tagptr(p,\
 		       _Generic((p),\
@@ -274,9 +273,9 @@ val_t* STACK;
 int_t STACKSIZE, SP;
 
 // The core evaluator registers
-val_t EXP, VAL, CONTINUE, NAME, ENV, UNEV, ARGL;
-val_t* RX, * RY, * RZ;  // intermediate result registers
-
+val_t EXP, VAL, CONTINUE, NAME, ENV, UNEV, ARGL, PROC;
+// working registers (never saved, always free)
+val_t WRX, WRY, WRZ; 
 tab_t* GLOBALS;
 // special constants
 // The lowtags and typecodes are laid out so that NIL, including correct lowtag and typecode,
@@ -285,14 +284,13 @@ tab_t* GLOBALS;
 // during garbage collection. 
 val_t NIL = 0, NONE = TYPECODE_NONE << 3, OK, T, FPTR = LOWTAG_CONSPTR;
 
-#define isnil(v)  ((v) == NIL)
-#define isnone(v) ((v) == NONE)
-#define isok(v)   ((v) == OK)
-#define istrue(v) ((v) == T)
-#define isfptr(v) ((v) == FPTR)
-
-
-/* basic error handling definitions */
+#define isnil(v)         ((v) == NIL)
+#define isnone(v)        ((v) == NONE)
+#define isok(v)          ((v) == OK)
+#define istrue(v)        ((v) == T)
+#define isfptr(v)        ((v) == FPTR)
+#define cbooltorbool(v)  ((v) ? T : NIL)
+#define rbooltocbool(v)  ((v) == NIL || (v) == NONE ? false : true)
 
 /* end common.h */
 #endif

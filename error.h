@@ -75,60 +75,39 @@ typedef enum r_errc_t {
   NULLPTR_ERR,
   SYNTAX_ERR,
   INDEX_ERR,
+  APPLICATION_ERR,
 } r_errc_t;
-
-r_errc_t ERRORCODE = OK_ERR;
 
 const chr_t* ERRNAMES[] = {
                             "OK", "TYPE", "VALUE", "ARITY", "UNBOUND",
                             "OVERFLOW", "IO", "NULLPTR", "SYNTAX", "INDEX",
+			    "APPLICATION",
                           };
 
-bool _checkerr_null(void*);         // checks dispatch for pointers
-bool _checkerr_val(val_t);          // checks dispatch for val
-bool _checkerr_int(int_t);          // checks dispatch for int
-
-/* set a given error code and return a sentinel value */
-int_t _seterr_int(int_t,int_t);
-val_t _seterr_none(int_t,val_t);
-void* _seterr_null(int_t,void*);
-
-#define seterr(i,s) _Generic((s),                         \
-			     val_t:_seterr_none,          \
-			     int_t:_seterr_int,           \
-			     default:_seterr_null)(i,s)
-
-#define checkerr(s) _Generic((s),                         \
-			     val_t:_checkerr_val,         \
-			     int_t:_checkerr_int,         \
-			     default:_checkerr_null)(s)
-
-#define clearerr() ERRORCODE = OK_ERR
-
-
-// fail and exit the function with a sentinel value
-#define fail(e,s)                 \
-  ERRORCODE = e ;                 \
-  return s
-
-#define failv(e,s,fmt,args...)    \
-  eprintf(e,stdlog,fmt,##args) ;  \
-  ERRORCODE = e ;                 \
-  return s                        \
-
-#define eprintf(e, file, fmt, args...)				\
+#define eprintf(e, file, fmt, args...)				                     \
+  do                                                                                 \
+  {									             \
   fprintf(file, "%s: %d: %s: %s ERROR: ",__FILE__,__LINE__,__func__,ERRNAMES[e]);    \
   fprintf(file,fmt,##args);                                                          \
-  fprintf(file,".\n")
+  fprintf(file,".\n");                                                               \
+  } while (0)								             \
 
 //  print common error messages to the log file.
 #define elogf(e,fmt,args...) eprintf(e,stdlog,fmt,##args)
 // shorthand for jumping to the safety point. The safety point prints an informative message
 // and initiates program exit.
-#define escape(e) longjmp(SAFETY, e)
-// since they're called together a lot, escapef composes them
-#define escapef(e,file,fmt,args...) eprintf(e,file,fmt,##args); escape(e)
 
+#define escape(e) longjmp(SAFETY, e)
+
+// since they're called together a lot, escapef composes them 
+#define escapef(e, file, fmt, args...)				                     \
+  do                                                                                 \
+  {									             \
+  fprintf(file, "%s: %d: %s: %s ERROR: ",__FILE__,__LINE__,__func__,ERRNAMES[e]);    \
+  fprintf(file,fmt,##args);                                                          \
+  fprintf(file,".\n");                                                               \
+  longjmp(SAFETY,e);							             \
+  } while (0)								             \
 
 void init_log();                 // initialize the global variable stdlog. Stdlog is 
 chr_t* read_log(chr_t*, int_t);  // read the log file into a string buffer.
