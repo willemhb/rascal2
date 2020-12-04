@@ -21,11 +21,14 @@ type_t* type_of(val_t v) {
   return TYPES[typecode(v)];
 }
 
-chr_t* typename(val_t v) {
+const chr_t* typename(val_t v) {
+static const chr_t* builtin_typenames[] = { "nil-type", "cons", "none-type", "str",
+                                            "type", "sym", "tab", "proc", "port", "int", };
+
   int_t t = typecode(v);
 
   if (t < NUM_BUILTIN_TYPES) {
-    return BUILTIN_TYPENAMES[t];
+    return builtin_typenames[t];
   }
   
   else {
@@ -75,25 +78,6 @@ int_t vm_size(val_t v) {
   default:
     return type_of(v)->tp_sizeof(v);
   }
-}
-
-
-/* memory initialization */
-void init_heap() {
-  // initialize the heap, the tospace, and the memory management globals
-  HEAPSIZE = INIT_HEAPSIZE;
-  HEAP = malloc(HEAPSIZE);
-  EXTRA = malloc(HEAPSIZE);
-  FREE = HEAP;
-
-  GROWHEAP = false;
-  return;
-}
-
-void init_types() {
-  TYPES = malloc(sizeof(type_t*) * INIT_NUMTYPES);
-  TYPECOUNTER = 0;
-  return;
 }
 
 static inline int_t alloc_size(uint_t bytes) {
@@ -171,7 +155,7 @@ val_t gc_trace(val_t* v) {
   default:
     return value;
   case TYPECODE_PORT:
-    newhead = gc_copy(heapobj(value), obj_size(value));
+    newhead = gc_copy(heapobj(value), vm_size(value));
     tag = LOWTAG_OBJPTR;
     break;
     
@@ -179,12 +163,12 @@ val_t gc_trace(val_t* v) {
     c = toc_(value);
     car_(c) = gc_trace(&(c->car));
     cdr_(c) = gc_trace(&(c->cdr));
-    newhead = gc_copy(heapobj(value), obj_size(value));
+    newhead = gc_copy(heapobj(value), vm_size(value));
     tag = tag(value) == LOWTAG_LISTPTR ? LOWTAG_LISTPTR : LOWTAG_CONSPTR;
     break;
 
   case TYPECODE_SYM:
-    newhead = gc_copy(heapobj(value), obj_size(value));
+    newhead = gc_copy(heapobj(value), vm_size(value));
     tag = LOWTAG_STROBJ;
     break;
 
@@ -196,12 +180,12 @@ val_t gc_trace(val_t* v) {
     tab->binding = gc_trace(&(tab->binding));
     tab->left = totab_(gc_trace(&tmpleft));
     tab->right = totab_(gc_trace(&tmpright));
-    newhead = gc_copy(heapobj(value), obj_size(value));
+    newhead = gc_copy(heapobj(value), vm_size(value));
     tag = LOWTAG_OBJPTR;
     break;
  
   case TYPECODE_STR:
-    newhead = gc_copy(heapobj(value), obj_size(value));
+    newhead = gc_copy(heapobj(value), vm_size(value));
     tag = LOWTAG_STRPTR;
     break;
 
@@ -218,7 +202,7 @@ val_t gc_trace(val_t* v) {
       proc->body = gc_trace(&body);
     }
 
-    newhead = gc_copy(heapobj(value), obj_size(value));
+    newhead = gc_copy(heapobj(value), vm_size(value));
     tag = LOWTAG_OBJPTR;
     break;
   }

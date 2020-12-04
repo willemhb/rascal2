@@ -31,7 +31,7 @@ inline int_t cmphs(chr_t* sx, uint_t hx, chr_t* sy, uint_t hy) {
   return cmpv(hx,hy) ? : cmps(sx,sy);
 }
 
-static tab_t* intern_string(chr_t* s, tab_t** st);
+static tab_t* intern_string(const chr_t* s, tab_t** st);
 
 val_t sym(chr_t* s) {
   tab_t* cell = intern_string(s,&GLOBALS);
@@ -39,7 +39,20 @@ val_t sym(chr_t* s) {
   return tagp(out);
 }
 
-static tab_t* intern_string(chr_t* s, tab_t** st) {
+sym_t* intern_builtin(const chr_t* s, val_t b) {
+  tab_t* cell = intern_string(s,&GLOBALS);
+  
+  if (istype(binding_(cell))) { // types are initialized before builtins, so we need to 
+    totype_(binding_(cell))->tp_new = b; // make sure not to overwrite the type with its
+  } else {                               // constructor
+    binding_(cell) = b;
+  }
+  sym_t* g_name = tosym_(key_(cell));
+  fl_const(g_name) = CONSTANT;
+  return g_name;
+}
+
+static tab_t* intern_string(const chr_t* s, tab_t** st) {
   hash_t h = hash_string(s);
   tab_t** curr = st;
 
@@ -150,7 +163,9 @@ val_t env_assoc(val_t v, val_t e) {
     
     while (iscons(ln)) {
       if (car_(ln) == v) return lb;
-      else ln = cdr_(ln); lb = cdr_(lb);
+      else {
+	ln = cdr_(ln); lb = cdr_(lb);
+      }
     }
 
     if (ln == v) return lb;

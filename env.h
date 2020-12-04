@@ -57,6 +57,7 @@ val_t sym(chr_t*);
 
 // tables
 tab_t* new_tab();
+sym_t* intern_builtin(const chr_t*,val_t);
 tab_t* tab_search(val_t,tab_t*);
 val_t  tab_get(val_t,val_t);
 val_t  tab_set(val_t,val_t,val_t);
@@ -69,3 +70,4 @@ val_t env_put(val_t,val_t);
 val_t env_set(val_t,val_t,val_t);
 /* end env.h */
 #endif
+ 

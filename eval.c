@@ -119,7 +119,8 @@ val_t vm_analyze(val_t x) {
 
 val_t eval_expr(int_t start, val_t x,  val_t e) {
 
-  static void* labels[] = { &&ev_setv, &&ev_quote, &&ev_let, &&ev_do,
+  static void* labels[] = {
+                            &&ev_setv, &&ev_quote, &&ev_let, &&ev_do,
                             &&ev_fn, &&ev_macro, &&ev_if, &&ev_literal,
 			    &&ev_variable, &&ev_assign, &&ev_assign_end, &&ev_apply,
 			    &&ev_apply_op_done, &&ev_apply_argloop, &&ev_apply_accumarg,
@@ -134,20 +135,47 @@ val_t eval_expr(int_t start, val_t x,  val_t e) {
                             &&everr_unbound, &&everr_overflow, &&everr_io, &&everr_nullptr,
 			    &&everr_syntax, &&everr_index };
 
-  EXP = x;
-  ENV = e;
-  CONTINUE = EV_HALT;
-
   r_errc_t error = setjmp(SAFETY);
 
   if (error) {
     goto *errors[error];
-  } else if (start!= -1) {
-    jump(start);
   } else {
-    dispatch(EXP);
+    goto ev_start;
   }
 
+ ev_start:
+  /* save the current values of all registers */
+  save(EXP);
+  save(VAL);
+  save(CONTINUE);
+  save(NAME);
+  save(ENV);
+  save(UNEV);
+  save(ARGL);
+  save(PROC);
+
+  EXP = x;
+  
+  failf(!(islist(e) || isnone(e)),TYPE_ERR,"Invalid environment type.");
+  ENV = isnone(e) ? ENV : e;
+  CONTINUE = EV_HALT;
+
+  branch(start != -1, start);
+  dispatch(EXP);
+
+ ev_halt:
+  WRX = VAL;
+  restore(PROC);
+  restore(ARGL);
+  restore(UNEV);
+  restore(ENV);
+  restore(NAME);
+  restore(CONTINUE);
+  restore(VAL);
+  restore(EXP);
+
+  return WRX;
+  
  everr_type: everr_value: everr_arity:
  everr_unbound: everr_syntax: everr_index:
   eprintf(error,stderr,"The error caused eval to fail, but not fatally.");
@@ -430,7 +458,4 @@ val_t eval_expr(int_t start, val_t x,  val_t e) {
     CONTINUE = EV_IF_TEST;
 
     dispatch(EXP);
-
-  ev_halt:
-    return VAL;
 }

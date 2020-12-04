@@ -32,21 +32,19 @@
 val_t  open(val_t,val_t);
 val_t  close(val_t);
 val_t  read(val_t);
+val_t  reads(val_t);
 val_t  prn(val_t,val_t);
-val_t reads(val_t);
 val_t load(val_t);
 
-val_t  _std_port(val_t,FILE*);  // for initializing stdin, stdout, etc.
+val_t  _std_port(FILE*);  // for initializing stdin, stdout, etc.
 port_t* vm_open(chr_t*,chr_t*);
 int_t vm_close(port_t*);
-val_t vm_read(port_t*);
 void vm_prn(val_t,port_t*);
 chr_t vm_getc(port_t*);
 int_t vm_putc(port_t*, chr_t);
 int_t vm_peekc(port_t*);
 int_t vm_puts(port_t*, chr_t*);
 str_t* vm_gets(port_t*,int_t);
-
 str_t* new_str(chr_t*);
 
 /* printers for builtin types */
@@ -55,10 +53,11 @@ str_t* new_str(chr_t*);
 
 void prn_int(val_t,port_t*);
 void prn_type(val_t,port_t*);
-void prn_bstr(val_t,port_t*);
+void prn_str(val_t,port_t*);
 void prn_cons(val_t,port_t*);
 void prn_sym(val_t,port_t*);
 void prn_proc(val_t,port_t*);
+void prn_port(val_t,port_t*);
 
 /* tokenizing */
 typedef enum _r_tok_t {
@@ -77,15 +76,17 @@ typedef enum _r_tok_t {
 #define TOKBUFF_SIZE 1024
 chr_t TOKBUFF[TOKBUFF_SIZE];
 chr_t STXERR[512];
-int_t TOKPTR = 0;
-r_tok_t TOKTYPE = TOK_NONE;
+int_t TOKPTR;
+r_tok_t TOKTYPE;
 
 #define take() TOKTYPE = TOK_NONE
 
 /* reader internal */
 r_tok_t get_token(port_t*);
 val_t read_expr(port_t*);
-val_t read_sexpr(port_t*);
+val_t read_cons(port_t*);
+val_t vm_read(port_t*);
+val_t vm_load(port_t*);
 
 /* end txtio.h */
 #endif

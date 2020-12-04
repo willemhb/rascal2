@@ -2,6 +2,7 @@
 
 /* begin common.h */
 #define common_h
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h>
@@ -240,12 +241,14 @@ enum {
   NUM_BUILTIN_TYPES,
 };
 
-chr_t* BUILTIN_TYPENAMES[] = { "nil", "cons", "none", "str", "type",
-                               "sym", "tab", "proc", "port", "int",
-                             };
+const chr_t* BUILTIN_TYPENAMES[] = { "nil-type", "cons", "none-type", "str",
+                                      "type", "sym", "tab", "proc", "port", "int", };
+
+
 
 
 // these generic macros are intended to simplify tagging values
+#define tagi(v) tagval((v), (TYPECODE_INT << 3) || LOWTAG_DIRECT)
 #define tagv(v) _Generic((v), \
 			 int_t:tagval(v, (TYPECODE_INT << 3) || LOWTAG_DIRECT))
 
@@ -282,7 +285,8 @@ tab_t* GLOBALS;
 // is equal to C 'NULL'
 // FPTR is a special value used to indicate that this cell has been moved to the new heap
 // during garbage collection. 
-val_t NIL = 0, NONE = TYPECODE_NONE << 3, OK, T, FPTR = LOWTAG_CONSPTR;
+val_t NIL, NONE, OK, T, FPTR;
+val_t R_STDIN, R_STDOUT, R_STDERR, R_PROMPT;
 
 #define isnil(v)         ((v) == NIL)
 #define isnone(v)        ((v) == NONE)

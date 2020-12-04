@@ -2,6 +2,15 @@
 #include "txtio.h"
 
 /* text and io types */
+
+/* basic string type */
+str_t* new_str(chr_t* s) {
+  str_t* out = (str_t*)vm_allocate(strlen(s) + 1);
+  strcpy(out,s);
+  return out;
+}
+
+/* port interface */
 val_t open(val_t fnm, val_t md) {
   str_t* fname = tostr(fnm);
   str_t* mode = tostr(md);
@@ -27,6 +36,20 @@ val_t prn(val_t v, val_t p) {
   return OK;
 }
 
+val_t reads(val_t p) {
+  static chr_t buffer[512];
+  port_t* port = toport(p);
+  chr_t* out = fgets(buffer,512,port->stream);
+
+  if (out == NULL) escapef(IO_ERR,stdout,"Failed to read string from port.");
+  return tagp(new_str(out));
+}
+
+val_t load(val_t fname) {
+  str_t* fnames = tostr(fname);
+  port_t* p = vm_open(fnames,"r");
+  return vm_load(p);
+}
 
 port_t* vm_open(str_t* fname, str_t* readmode) {
   FILE* f = fopen(fname,readmode);
@@ -57,6 +80,24 @@ port_t* vm_open(str_t* fname, str_t* readmode) {
   }
 
   return obj;
+}
+
+val_t _std_port(FILE* f) {
+  port_t* obj = (port_t*)vm_allocate(24);
+
+  type_(obj) = TYPECODE_PORT;
+  stream_(obj) = f;
+  fl_iotype(obj) = TEXT_PORT;  // worry about binary later
+
+  if (f == stdin) {
+    fl_readable(obj) = 1;
+    fl_writable(obj) = 0;
+  } else {
+    fl_readable(obj) = 0;
+    fl_writable(obj) = 1;
+  }
+
+  return tagp(obj);
 }
 
 int_t vm_close(port_t* p) {
@@ -144,7 +185,7 @@ void prn_proc(val_t pr,port_t* p) {
   return;
 }
 
-void vm_prn_sym(val_t s, port_t* p) {
+void prn_sym(val_t s, port_t* p) {
   vm_puts(p,name_(s));
 }
 
@@ -209,6 +250,8 @@ int_t vm_puts(port_t* p, chr_t* s) {
 bool vm_eof(port_t* p) {
   return feof(p->stream);
 }
+
+
 
 /* tokenizer */
 static void accumtok(chr_t c) {
@@ -312,7 +355,7 @@ val_t read_expr(port_t* p) {
 
   case TOK_LPAR:
     take();
-    return read_sexpr(p);
+    return read_cons(p);
 
   case TOK_QUOT:
     take();
@@ -370,7 +413,7 @@ val_t vm_read(port_t* p) {
  
 */
 
-void vm_load(port_t* p) {
+val_t vm_load(port_t* p) {
   val_t out = cons(sym("do"),NIL);
 
   while (true) {
@@ -379,5 +422,5 @@ void vm_load(port_t* p) {
     append(&out, exp);        //this can be written be better
   }
 
-  eval_expr(-1,out,NIL);
+  return eval_expr(-1,out,NIL);
 }

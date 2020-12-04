@@ -36,7 +36,7 @@
 /* type data */
 uint_t typecode(val_t);
 type_t* type_of(val_t);
-chr_t* typename(val_t);
+const chr_t* typename(val_t);
 bool callable(val_t);
 bool atomic(val_t);
 int_t vm_size(val_t);
@@ -77,7 +77,7 @@ int_t vm_size(val_t);
 
 #define SAFECAST_MACRO(v,tp)			                                                 \
   ({ val_t _v_ = v ;                                                                             \
-    if (!is##tp(_v_)) { escapef(TYPE_ERR,stdout,"Expected type %s, got %s",#tp,typename(v)); } ; \
+    if (!is##tp(_v_)) escapef(TYPE_ERR,stdout,"Expected type %s, got %s",#tp,typename(v)) ;      \
     to##tp##_(_v_) ;								                 \
   })
 
@@ -118,6 +118,7 @@ int_t vm_size(val_t);
 #define INIT_NUMTYPES 256      // number of records
 #define RAM_LOAD_FACTOR 0.8    // resize ram if, directly after garbage collection, (FREE - HEAP) > more than RAM_LOAD_FACTOR * (HEAPSIZE)
 #define HEAP_ALIGNSIZE 8       // the alignment of the heap
+
 #define CHECK_RESIZE() (FREE - HEAP) > (RAM_LOAD_FACTOR * HEAPSIZE) ? true : false
 
 
