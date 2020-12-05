@@ -7,13 +7,14 @@ void repl() {
 
     if (error) {
       fprintf(stderr,"Error caused escape to the top level.");
-      continue;
+      return;
     }
     
-    prn(R_PROMPT, R_STDOUT);
-    val_t expr = read(R_STDIN);
-    eval_expr(-1,expr,NONE);
-    prn(expr,R_STDOUT);
+    r_prn(R_PROMPT, R_STDOUT);
+    val_t expr = r_read(R_STDIN);
+    eval_expr(-1,expr,ROOT_ENV);
+    r_prn(expr,R_STDOUT);
+    vm_puts(toport_(R_STDOUT),"\n");
   }
 }
 

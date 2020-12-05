@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <limits.h>
 #include <stdint.h>
+#include <ctype.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
@@ -122,6 +123,7 @@ enum {
   /* the types below this mark have not been implemented yet */
   TYPECODE_FLOAT, // 32-bit floating point number
   TYPECODE_UCP,   // A UTF-32 code point
+  TYPECODE_ANY,
   NUM_BUILTIN_TYPES = TYPECODE_INT,
 };
 
@@ -136,8 +138,8 @@ enum {
 // convenience macros for applying the correct tag to an object
 #define tagv(v) _Generic((v),                         \
     int_t:tagval(v, INT_LOWTAG),                      \
-    float_t:tagval(v, FLOAT_LOWTAG),                  \
-			 ucp_t:tagval(v, UCP_LOWTAG))
+			 float_t:tagval(v, FLOAT_LOWTAG))
+
 #define tagp(p) tagptr(p,                               \
 		       _Generic((p),                    \
 				sym_t*:LOWTAG_STROBJ,   \
@@ -199,7 +201,7 @@ int_t cmpv(val_t,val_t);
 #define istype(v) (typecode(v) == TYPECODE_TYPE)
 #define issym(v)  (typecode(v) == TYPECODE_SYM)
 #define iscons(v) (typecode(v) == TYPECODE_CONS)
-#define istab(v)  (typecode(v) == TYPECODE_DICT)
+#define isdict(v)  (typecode(v) == TYPECODE_DICT)
 #define isstr(v)  (typecode(v) == TYPECODE_STR)
 #define isproc(v) (typecode(v) == TYPECODE_PROC)
 #define isport(v) (typecode(v) == TYPECODE_PORT)
@@ -209,7 +211,7 @@ int_t cmpv(val_t,val_t);
 // safe casts for builtin types 
 #define totype(v)   SAFECAST_MACRO(v,type)
 #define tosym(v)    SAFECAST_MACRO(v,sym)
-#define todict(v)    SAFECAST_MACRO(v,dict)
+#define todict(v)   SAFECAST_MACRO(v,dict)
 #define tocons(v)   SAFECAST_MACRO(v,cons)
 #define tostr(v)    SAFECAST_MACRO(v,str)
 #define toproc(v)   SAFECAST_MACRO(v,proc)
@@ -220,7 +222,7 @@ int_t cmpv(val_t,val_t);
 /* rascal general object API */
 val_t r_eqp(val_t,val_t);
 val_t r_cmp(val_t,val_t);
-val_t r_size(val_t,val_t);
+val_t r_size(val_t);
 val_t r_typeof(val_t);
 val_t r_isa(val_t,val_t);
 val_t r_nilp(val_t);
@@ -328,10 +330,10 @@ typedef enum sym_fl {
 val_t hash(val_t);
 chr_t* name(val_t);
 val_t sym(chr_t*);
-val_t str(chr_t*);
+chr_t* str(chr_t*);
 // the functions below are intended to help compare uninterned strings to symbols
-int_t cmps(chr_t*,chr_t*);
-int_t cmphs(chr_t*,hash_t,chr_t*,hash_t);
+int_t cmps(const chr_t*,const chr_t*);
+int_t cmphs(const chr_t*,hash_t,const chr_t*,hash_t);
 /* 
    rascal api for symbols and strings
  */
@@ -364,16 +366,22 @@ struct dict_t {
   dict_t* right;
 };
 
-#define key_(t)     FAST_ACCESSOR_MACRO(t,dict_t*,key)
-#define binding_(t) FAST_ACCESSOR_MACRO(t,dict_t*,binding)
-#define left_(t)    FAST_ACCESSOR_MACRO(t,dict_t*,left)
-#define right_(t)   FAST_ACCESSOR_MACRO(t,dict_t*,right)
+#define key_(d)     FAST_ACCESSOR_MACRO(d,dict_t*,key)
+#define binding_(d) FAST_ACCESSOR_MACRO(d,dict_t*,binding)
+#define left_(d)    FAST_ACCESSOR_MACRO(d,dict_t*,left)
+#define right_(d)   FAST_ACCESSOR_MACRO(d,dict_t*,right)
+#define keytype_(d) FAST_ACCESSOR_MACRO(d,dict_t*,head.meta)
 
 /* vm api for dicts */
-dict_t* dict();
+dict_t* dict(int_t); // This argument indicates whether or not
+                     // the dict's keys are typed; only access-
+                     // ible within the VM, to ensure the
+                     // global symbols table isn't polluted
+
 sym_t* intern_builtin(const chr_t*,val_t);
-dict_t* dict_searchk(val_t,dict_t*);
-dict_t* dict_searchv(val_t,dict_t*);
+dict_t** dict_searchk(val_t,dict_t**);
+dict_t*  dict_setk(val_t,val_t,dict_t*);
+dict_t*  dict_searchv(val_t,dict_t*);
 
 /* 
    rascal api for dicts
@@ -387,7 +395,7 @@ val_t r_dict(val_t);
 /* 
    rascal API for structured objects 
 
-   This api involves four functions - assr, assv, rplcr, rplcv.
+   This api involves four functions - assr, assv, setr, rplcv.
 
    (assr some-dict 'key) returns a context-appropriate object corresponding to the first 
    location matching the key, or NIL if the key can't be found.
@@ -407,52 +415,42 @@ val_t r_dict(val_t);
 
    For ordered collections, assv returns the index of the first element equal to v.
 
-   rplcr and rplcv are setters; on success, they return a copy of the original object;
+   setr and rplcv are setters; on success, they return a copy of the original object;
    on failure, they return an error.
 
-   For dicts, rplcr replaces the value associated with the given key with the value of the
+   For dicts, setr replaces the value associated with the given key with the value of the
    third argument. If the key is not an element in the dictionary, it is added.
 
-   For lists, rplcr inserts a new cell at the given index and sets its value to the third
-   argument. If the index is out of range, rplcr raises an error.
+   For lists, setr inserts a new cell at the given index and sets its value to the third
+   argument. If the index is out of range, setr raises an error.
 
-   For indexed collections, rplcr replaces the nth value with the given value. If the index
-   is out of range, rplcr raises an error.
+   For indexed collections, setr replaces the nth value with the given value. If the index
+   is out of range, setr raises an error.
 
    dicts do not implement rplcv.
 
    For lists and indexed collections, rplcv replaces the first occurence of the second 
    argument with the third argument. If no occurences are found, rplcv returns NONE.
 
-   Using either rplcr or rplcv on a string returns a new string (since it may not
+   Using either setr or rplcv on a string returns a new string (since it may not
    be possible to replace the given index or character without resizing the array).
 
 */
 
 val_t r_assr(val_t,val_t);
 val_t r_assv(val_t,val_t);
-val_t r_rplcr(val_t,val_t,val_t);
+val_t r_setr(val_t,val_t,val_t);
 val_t r_rplcv(val_t,val_t,val_t);
 
 /* 
    environment API 
 
  */
-
-// environments
-bool  isenvnames(val_t);  // test whether the given argument is a valid list of argument names
+bool  isenvnames(val_t);
 val_t new_env(val_t,val_t,val_t);
-val_t env_assoc(val_t,val_t);
-val_t env_put(val_t,val_t);
-val_t env_set(val_t,val_t,val_t);
-
-/* 
-   rascal environment API 
-   
- */
-
-val_t r_lookup(val_t);
-
+val_t vm_asse(val_t,val_t);
+val_t vm_pute(val_t,val_t);
+val_t vm_sete(val_t,val_t,val_t);
 
 
 /* type objects */
@@ -515,7 +513,7 @@ typedef enum proc_fl {
 /* VM api for procedures */
 val_t new_proc(val_t,val_t,val_t,proc_fl,proc_fl);
 bool  check_argco(int_t,val_t,bool);
-val_t invoke(val_t(*)(),int_t,val_t);
+val_t invoke(val_t(*)(),int_t,val_t, bool);
 
 /* IO ports and reader/tokenizer */
 
@@ -528,6 +526,7 @@ struct port_t {
 #define fl_iotype_(p)      FAST_ACCESSOR_MACRO(p,port_t*,head.flags_0)
 #define fl_readable_(p)    FAST_ACCESSOR_MACRO(p,port_t*,head.flags_1)
 #define fl_writable_(p)    FAST_ACCESSOR_MACRO(p,port_t*,head.flags_2)
+#define isopen(p)          (fl_readable_(p) || fl_writable_(p))
 
 typedef enum port_fl {
   BINARY_PORT,
@@ -557,8 +556,6 @@ chr_t TOKBUFF[TOKBUFF_SIZE];
 chr_t STXERR[512];
 int_t TOKPTR;
 r_tok_t TOKTYPE;
-
-#define take() TOKTYPE = TOK_NONE
 
 /* 
    PORTs, IO interface, and the builtin reader
@@ -661,6 +658,7 @@ val_t EXP, VAL, CONTINUE, NAME, ENV, UNEV, ARGL, PROC;
 // working registers (never saved, always free)
 val_t WRX, WRY, WRZ; 
 dict_t* GLOBALS;
+val_t ROOT_ENV;
 // special constants
 // The lowtags and typecodes are laid out so that NIL, including correct lowtag and typecode,
 // is equal to C 'NULL'
@@ -871,11 +869,11 @@ DECLARE(r_nonep,1);
 /* int builtin */
 val_t r_int(val_t);
 
-#define NUM_BUILTINS 30
+#define NUM_BUILTINS 35
 
 /* initialization */
 /* bootstrapping builtin functions */
-void _new_builtin_function(const chr_t*,int_t,const void*);  
+void _new_builtin_function(const chr_t*, int_t, bool, const void*);  
 val_t  _new_form_name(chr_t*);                 
 val_t  _new_self_evaluating(chr_t*);
 

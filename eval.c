@@ -7,7 +7,7 @@ val_t new_proc(val_t formals, val_t env, val_t body, proc_fl callmode, proc_fl b
   
   if (bodytype == BODYTYPE_CFNC) {
     argco = formals;
-    vargs = VARGS_FALSE;
+    vargs = VARGS_FALSE; // this flag should be explicitly altered during initialization
     formals = NIL;
   } else if (!isenvnames(formals)) {
     escapef(TYPE_ERR, stderr, "Malformed argument list.");
@@ -39,7 +39,7 @@ inline bool check_argco(int_t argc, val_t argl, bool vargs) {
   else return true;
 }
 
-inline val_t invoke(val_t (*behavior)(), int_t argco, val_t argl) {
+inline val_t invoke(val_t (*behavior)(), int_t argco, val_t argl, bool vargs) {
   val_t argarray[argco];
 
   for (int_t i = 0; i < argco; i++) {
@@ -49,7 +49,7 @@ inline val_t invoke(val_t (*behavior)(), int_t argco, val_t argl) {
     argarray[i] = car_(argl);
   }
 
-  if (argl != NIL) {
+  if (argl != NIL && !vargs) {
     escapef(ARITY_ERR, stderr, "Expected %d, got %d", argco,argco + ncells(argl));
   }
 
@@ -67,7 +67,7 @@ inline val_t invoke(val_t (*behavior)(), int_t argco, val_t argl) {
   case 6:
     return  behavior(argarray[0], argarray[1], argarray[2], argarray[3], argarray[4], argarray[5]);
   default:
-    escapef(ARITY_ERR,stderr,"Rascal does not currently support builtin functions of more than 6 arguments.");
+    escapef(ARITY_ERR,stderr,"Rascal does not currently support builtin functions of more than 6 fixed arguments.");
   }
 }
 
@@ -223,7 +223,7 @@ val_t eval_expr(int_t start, val_t x,  val_t e) {
   jump(CONTINUE);
 
  ev_variable:
-  VAL = env_assoc(EXP,ENV);
+  VAL = vm_asse(EXP,ENV);
   failf(VAL == NONE, UNBOUND_ERR, "Unbound symbol error.");
 
   jump(CONTINUE);
@@ -244,7 +244,7 @@ val_t eval_expr(int_t start, val_t x,  val_t e) {
 
  ev_setv_assign:
   failf(!issym(VAL),TYPE_ERR, "Attempt to assign to non-symbol");
-  failf(isconst(tosym_(VAL)), VALUE_ERR, "Attempt to reassign constant symbol %s", name_(VAL));
+  failf(fl_const_(tosym_(VAL)), VALUE_ERR, "Attempt to reassign constant symbol %s", name_(VAL));
   NAME = VAL;
   restore(EXP);
   restore(CONTINUE);
@@ -252,6 +252,7 @@ val_t eval_expr(int_t start, val_t x,  val_t e) {
   jump(EV_ASSIGN);
 
  ev_assign:
+  vm_pute(NAME,ENV);
   save(NAME);
   save(ENV);
   save(CONTINUE);
@@ -265,7 +266,7 @@ val_t eval_expr(int_t start, val_t x,  val_t e) {
   restore(NAME);
   restore(ENV);
 
-  env_set(NAME, VAL, ENV);
+  vm_sete(NAME, VAL, ENV);
 
   jump(CONTINUE);
 
@@ -349,7 +350,7 @@ val_t eval_expr(int_t start, val_t x,  val_t e) {
   goto ev_sequence_start;
 
  ev_apply_builtin:
-  VAL = invoke((val_t (*)())(body_(PROC)),argco_(PROC),ARGL);
+  VAL = invoke((val_t (*)())(body_(PROC)),argco_(PROC),vargs_(PROC), ARGL);
   jump(CONTINUE);
 
  ev_apply_macro:
@@ -435,7 +436,7 @@ val_t eval_expr(int_t start, val_t x,  val_t e) {
     ARGL = cdr_(ARGL);
     failf(ARGL == NIL, ARITY_ERR, "Unpaired let binding.");
     EXP = car_(ARGL);
-    env_put(NAME,ENV);
+    vm_pute(NAME,ENV);
     save(ARGL);
 
     goto ev_assign;

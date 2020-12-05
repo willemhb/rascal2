@@ -20,14 +20,14 @@ inline int_t cmpv(val_t x, val_t y) {
   else return 0;
 }
 
-inline int_t cmps(chr_t* sx, chr_t* sy) {
+inline int_t cmps(const chr_t* sx, const chr_t* sy) {
   int_t r = strcmp(sx,sy);
   if (r < 0) return -1;
   else if (r > 0) return 1;
   else return 0;
 }
 
-inline int_t cmphs(chr_t* sx, uint_t hx, chr_t* sy, uint_t hy) {
+inline int_t cmphs(const chr_t* sx, uint_t hx, const chr_t* sy, uint_t hy) {
   return cmpv(hx,hy) ? : cmps(sx,sy);
 }
 
@@ -48,7 +48,7 @@ sym_t* intern_builtin(const chr_t* s, val_t b) {
     binding_(cell) = b;
   }
   sym_t* g_name = tosym_(key_(cell));
-  fl_const(g_name) = CONSTANT;
+  fl_const_(g_name) = CONSTANT;
   return g_name;
 }
 
@@ -66,7 +66,7 @@ static dict_t* intern_string(const chr_t* s, dict_t** st) {
   }
 
   if (*curr == NULL) {
-    dict_t* new_t = new_dict();
+    dict_t* new_t = dict(TYPECODE_SYM);
     sym_t* new_s = (sym_t*)vm_allocate(sizeof(sym_t)+strlen(s));
     strcpy(name_(new_s),s);
     hash_(new_s) = h;
@@ -79,50 +79,190 @@ static dict_t* intern_string(const chr_t* s, dict_t** st) {
 }
 
 /* dict_search takes advantage of the interning by doing a simple pointer comparison */
-dict_t* dict_search(val_t k, dict_t* dict) {
-  dict_t* curr = dict;
+dict_t** dict_searchk(val_t k, dict_t** dict) {
+  dict_t** curr = dict;
 
-  while (curr) {
-    val_t currk = (curr)->key;
+  while (*curr) {
+    val_t currk = (*curr)->key;
     int_t order = cmpv(k, currk);
 
-    if (order < 0) curr = curr->left;
-    else if (order > 1) curr = curr->right;
+    if (order < 0) curr = &((*curr)->left);
+    else if (order > 1) curr = &((*curr)->right);
     else break;
     }
 
   return curr;
 }
 
-val_t dict_set(val_t k, val_t v, val_t t) {
-  dict_t* root = todict(t);
-  dict_t* node = dict_search(k, root);
+dict_t* dict_setk(val_t k, val_t v, dict_t* d) {
+  if (d == NULL) {
+    d = dict(TYPECODE_ANY);
+    key_(d) = k;
+    binding_(d) = v;
+    return d;
+  }
+  uint_t kt = keytype_(d);
+  if (kt != TYPECODE_ANY && kt != typecode(k)) {
+    escapef(TYPE_ERR,stderr,"Bad key of type %s",typename(k));
+  }
 
-  if (node == NULL) { escapef(NULLPTR_ERR,stderr,"Unexpected null pointer in dict_set."); }
+  if (issym(k) && fl_const_(k) == CONSTANT) {
+    escapef(TYPE_ERR,stderr,"Tried to reset global constant");
+  }
 
-  binding_(node) = v;
+  dict_t** node = dict_searchk(k, &d);
+
+  if (*node == NULL) {
+    *node = dict(kt);
+    key_(*node) = k;
+  }
+  binding_(*node) = v;
   
-  return v;
+  return d;
 }
 
-val_t dict_get(val_t k, val_t t) {
-  dict_t* root = todict(t);
-  dict_t* node = dict_search(k, root);
-
-  if (node == NULL) { escapef(NULLPTR_ERR,stderr,"Unexpected null pointer in dict_get."); }
-
-  return binding_(node);
+dict_t* dict_searchv(val_t v, dict_t* d) {
+  if (d == NULL) {
+    return d;
+  } else if (v == binding_(d)) {
+    return d;
+  } else {
+    dict_t* search_left = dict_searchv(v,left_(d));
+    if (search_left != NULL) {
+      return search_left;
+    } else {
+      return dict_searchv(v,right_(d));
+    }
+  }
 }
 
-dict_t* new_dict() {
+dict_t* dict(int_t tc) {
   dict_t* out = (dict_t*)vm_allocate(sizeof(dict_t));
   type_(out) = TYPECODE_DICT;
-  meta_(out) = TYPECODE_SYM;        // the types of the keys in this dictle
-  key_(out) = NONE;                      // for now, all keys must have the same type,
-  binding_(out) = NONE;                  // and the only allowed type is symbol
+  meta_(out) = tc;        
+  key_(out) = NONE;                     
+  binding_(out) = NONE;                  
   left_(out) = right_(out) = NULL;
   
   return out;
+}
+
+val_t r_dict(val_t args) {
+  if (!iscons(args)) {
+    escapef(TYPE_ERR, stderr, "Malformed arguments list");
+  }
+  dict_t* out = NULL;
+  while (iscons(args)) {
+    val_t k = car_(args);
+    args = cdr_(args);
+    val_t v = isnil(args) ? NIL : car_(args);
+    args = cdr_(args);
+    out = dict_setk(k,v,out);
+  }
+
+  if (out == NULL) {
+    escapef(TYPE_ERR, stderr, "Cannot create a dictionary with no keys.");
+  }
+
+  return tagp(out);
+}
+
+/* generic functions for object indexing and search */
+val_t r_assr(val_t k, val_t o) {
+  if (isdict(o)) {
+    dict_t* d = todict_(o);
+    dict_t** r = dict_searchk(k, &d);
+    if (*r == NULL) {
+      return NIL;
+    } else {
+      return cons(key_(*r), binding_(*r));
+    }
+  } else if (iscons(o)) {
+    int_t idx = toint(k);
+
+    while (idx && iscons(o)) {
+      idx--;
+      o = cdr_(o);
+    }
+
+    return o;
+    
+  } else {
+    escapef(TYPE_ERR, stderr, "assr only supports dicts and lists.");
+  }
+}
+
+val_t r_assv(val_t v, val_t o) {
+  if (isdict(o)) {
+    dict_t* d = todict_(o);
+    dict_t* r = dict_searchv(v, d);
+    if (r == NULL) {
+      return NIL;
+    } else {
+      return cons(key_(r), binding_(r));
+    }
+  } else if (iscons(o)) {
+    int_t count = 0;
+    while (iscons(o)) {
+      if (v == car_(o)) {
+	return tagv(count);
+      }
+      count++;
+      o = cdr_(o);
+    }
+
+    if (!isnil(o) && v == o) {
+      return tagv(count);
+    }
+    else {
+      return NIL;
+    }
+  } else {
+    escapef(TYPE_ERR, stderr, "assr only supports dicts and lists.");
+  }
+}
+
+val_t r_setr(val_t r, val_t v, val_t o) {
+  if (isdict(o)) {
+    dict_t* d = todict_(o);
+    return tagp(dict_setk(r,v,d));
+  } else if (iscons(o)) {
+    int_t i = toint(r);
+    val_t c = 0;
+    while (i && iscons(c)) {
+      i--;
+      c = cdr_(c);
+    }
+
+    if (i) {
+      return NIL;
+    } else if (!iscons(c)) {
+      return NIL;
+    } else {
+      car_(c) = v;
+      return o;
+    }
+  } else {
+    escapef(TYPE_ERR,stderr,"setr not implemented for %s",typename(o));
+  }
+}
+
+val_t r_rplcv(val_t v, val_t n, val_t o) {
+  if (iscons(o)) {
+    val_t c = o;
+    while (iscons(c)) {
+      if (car_(c) == v) {
+	car_(c) = n;
+	return o;
+      } else {
+	c = cdr_(c);
+      }
+    }
+
+    return NIL;
+  } else {
+    escapef(TYPE_ERR,stderr,"Not implemented for %s",typename(o));
+  }
 }
 
 bool isenvnames(val_t n) {
@@ -147,58 +287,81 @@ val_t new_env(val_t n, val_t b, val_t p) {
   return cons(locals, p);
 }
 
-val_t env_assoc(val_t v, val_t e) {
+val_t vm_asse(val_t v, val_t e) {
   /* 
-     env can safely assume that v is a symbol, e is an 
-     and the local environment frame is correctly formed.
-   
+     env can safely assume that v is a symbol and e is an
+     environment.
   */
   if (e == NIL) {
-    dict_t* global = dict_search(v,GLOBALS);
-    return tagp(global);
-
+    return NONE;
   } else {
-    val_t ln = cxr(e,AA);
-    val_t lb = cxr(e,AD);
-    
-    while (iscons(ln)) {
-      if (car_(ln) == v) return lb;
-      else {
-	ln = cdr_(ln); lb = cdr_(lb);
+    val_t locals = car(e);
+    if (isdict(locals)) {
+      dict_t* local_d = todict_(locals);
+      dict_t** result = dict_searchk(v, &local_d);
+
+      if (*result == NULL) {
+	return vm_asse(v, cdr_(e));
+      } else {
+	return tagp(*result);
       }
+    } else if (iscons(locals)) {
+      val_t ln = car_(locals);
+      val_t lb = cdr_(locals);
+      val_t i = r_assv(v,ln);
+      if (isnil(i)) {
+	return vm_asse(v, cdr_(e));
+      } else {
+	return r_assr(i,lb);
+      }
+    } else {
+      escapef(TYPE_ERR,stderr,"Incorrect type for locals.");
     }
-
-    if (ln == v) return lb;
-    else return env_assoc(v, cdr_(e));
   }
 }
 
 
-val_t env_put(val_t n, val_t e) {
-  if (e == NIL) {
-    return OK;
-  } else {
-    val_t* loc_n = &car_(car_(e));
-    val_t* loc_b = &cdr_(car_(e));
-
-    while (iscons(*loc_n)) {
-      loc_n = &cdr_(*loc_n);
-      loc_b = &cdr_(*loc_b);
-    }
-
-    *loc_n = cons(n, *loc_n);
-    *loc_b = cons(NIL, *loc_b);
-    
-    return OK;
+val_t vm_pute(val_t n, val_t e) {
+  sym_t* sn = tosym(n);
+  if (fl_const_(sn) == CONSTANT) {
+    escapef(TYPE_ERR,stderr,"Attempt to rebind constant");
   }
+    val_t locals = car(e);
+    if (isdict(locals)) {
+      if (todict_(locals) == GLOBALS) {
+	return OK;
+      } else {
+	r_setr(n,NONE,locals);
+	return OK;
+      }
+    } else if (iscons(locals)) {
+      car_(locals) = cons(n,car_(locals));
+      cdr_(locals) = cons(NIL,cdr_(locals));
+      return OK;
+    } else {
+      escapef(TYPE_ERR,stderr,"Incorrect environment type.");
+    }
 }
 
-val_t env_set(val_t n, val_t v, val_t e) {
+val_t vm_sete(val_t n, val_t v, val_t e) {
+  sym_t* sn = tosym(n);
+  if (fl_const_(sn) == CONSTANT) {
+    escapef(TYPE_ERR,stderr,"Attempt to rebind constant");
+  }
+
   if (e == NIL) {
-    return dict_set(n,v,tagp(GLOBALS));
+    escapef(UNBOUND_ERR,stderr,"Couldn't find name in globals");
   } else {
-    val_t loc_b = env_assoc(n,e);
-    car_(loc_b) = v;
-    return v;
+    val_t loc = vm_asse(n,e);
+
+    if (iscons(loc)) {
+      car_(loc) = v;
+      return v;
+    } else if (isdict(loc)) {
+      binding_(loc) = v;
+      return v;
+    } else {
+      escapef(UNBOUND_ERR,stderr,"Couldn't find name in env");
+    }
   }
 }

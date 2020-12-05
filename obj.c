@@ -23,7 +23,7 @@ type_t* type_of(val_t v) {
 
 const chr_t* typename(val_t v) {
 static const chr_t* builtin_typenames[] = { "nil-type", "cons", "none-type", "str",
-                                            "type", "sym", "tab", "proc", "port", "int", };
+                                            "type", "sym", "dict", "proc", "port", "int", };
 
   int_t t = typecode(v);
 
@@ -69,8 +69,8 @@ int_t vm_size(val_t v) {
     return sizeof(proc_t);
   case TYPECODE_TYPE:
     return sizeof(type_t);
-  case TYPECODE_TAB:
-    return sizeof(tab_t);
+  case TYPECODE_DICT:
+    return sizeof(dict_t);
   case TYPECODE_STR:
     return strlen(tostr_(v)) + 1;
   case TYPECODE_SYM:
@@ -145,7 +145,7 @@ val_t gc_trace(val_t* v) {
   val_t tmpleft, tmpright, env, formals, body;
   int_t tag;
   cons_t* c;
-  tab_t* tab;
+  dict_t* dict;
   proc_t* proc;
 
   switch (typecode(value)) {
@@ -172,14 +172,14 @@ val_t gc_trace(val_t* v) {
     tag = LOWTAG_STROBJ;
     break;
 
-  case TYPECODE_TAB:
-    tab = totab_(value);
-    tmpleft = tagptr(tab->left, LOWTAG_OBJPTR);
-    tmpright = tagptr(tab->right, LOWTAG_OBJPTR);
-    tab->key = gc_trace(&(tab->key));
-    tab->binding = gc_trace(&(tab->binding));
-    tab->left = totab_(gc_trace(&tmpleft));
-    tab->right = totab_(gc_trace(&tmpright));
+  case TYPECODE_DICT:
+    dict = todict_(value);
+    tmpleft = tagptr(dict->left, LOWTAG_OBJPTR);
+    tmpright = tagptr(dict->right, LOWTAG_OBJPTR);
+    dict->key = gc_trace(&(dict->key));
+    dict->binding = gc_trace(&(dict->binding));
+    dict->left = todict_(gc_trace(&tmpleft));
+    dict->right = todict_(gc_trace(&tmpright));
     newhead = gc_copy(heapobj(value), vm_size(value));
     tag = LOWTAG_OBJPTR;
     break;

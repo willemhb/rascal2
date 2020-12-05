@@ -31,11 +31,11 @@ inline val_t r_eqp(val_t x, val_t y) {
 }
 
 val_t r_size(val_t v) {
-  return tagi(vm_size(v));
+  return tagv(vm_size(v));
 }
 
 val_t r_cmp(val_t x, val_t y) {
-  return tagi(cmpv(x,y));
+  return tagv(cmpv(x,y));
 }
 
 inline val_t r_typeof(val_t v) {
@@ -87,15 +87,15 @@ val_t r_sym(val_t v) {
 
 val_t r_str(val_t v) {
   chr_t* b;
-  str_t* out;
+  val_t out;
   switch(typecode(v)) {
   case TYPECODE_SYM:
-    return tagp(new_str(name_(v)));
+    return tagp(str(name_(v)));
   case TYPECODE_INT:
     b = itoa(toint_(v),10);
-    out = new_str(b);
+    out = tagp(str(b));
     free(b);
-    return tagp(out);
+    return out;
   case TYPECODE_STR:
     return v;
   default:
@@ -107,58 +107,74 @@ val_t r_str(val_t v) {
 val_t r_int(val_t v) {
   switch(typecode(v)) {
   case TYPECODE_SYM:
-    return tagi(atoi(name_(v)));
+    return tagv(atoi(name_(v)));
   case TYPECODE_INT:
     return v;
   case TYPECODE_STR:
-    return tagi(atoi(tostr_(v)));
+    return tagv(atoi(tostr_(v)));
   default:
     escapef(TYPE_ERR,stderr,"Invalid argument of type %s",typename(v));
   }
 }
 
-void _new_builtin_function(const chr_t* fname, int_t argc, const void* f) {
-  val_t obj = new_proc(tagi(argc),NIL,((val_t)f),CALLMODE_FUNC,BODYTYPE_CFNC);
+void _new_builtin_function(const chr_t* fname, int_t argc, bool vargs, const void* f) {
+  val_t obj = new_proc(tagv(argc),NIL,((val_t)f),CALLMODE_FUNC,BODYTYPE_CFNC);
+  if (vargs) {
+    vargs_(obj) = VARGS_TRUE;
+  }
   intern_builtin(fname,obj);
   return;
 }
 
 void init_builtin_functions() {
-  static const chr_t* builtin_fnames[] = {
+  static chr_t* builtin_fnames[] = {
     "+", "-", "*", "/", "rem",                  // arithmetic
     "<", "=", "eq?", "nil?","none?",            // predicates and comparison
     "cmp", "type", "isa?", "size", "cons",
-    "sym", "str", "int", "car", "cdr",
-    "rplca", "rplcd", "open", "close", "read",
-    "prn", "reads", "load", "eval", "apply",         
+    "sym", "str", "int", "dict", "car",
+    "cdr", "rplca", "rplcd", "assr","assv",
+    "setr", "rplcv", "open", "close", "read",
+    "prn", "reads", "load", "eval", "apply",
   };
 
-  static const int_t builtin_argcos[] = {
+  static int_t builtin_argcos[] = {
     2, 2, 2, 2, 2,
     2, 2, 2, 1, 1,
     2, 1, 2, 1, 2,
     1, 1, 1, 1, 1,
-    2, 2, 2, 1, 1,
+    1, 2, 2, 2, 2,
+    3, 3, 2, 1, 1,
     2, 1, 1, 2, 2,
   };
 
-  static const void* builtin_callables[] = {
+  static bool builtin_vargs[] = {
+    false, false, false, false, false,
+    false, false, false, false, false,
+    false, false, false, false, false,
+    false, false, false, true, false,
+    false, false, false, false, false,
+    false, false, false, false, false,
+    false, false, false, false, false,
+  };
+
+  static void* builtin_callables[] = {
     r_add, r_sub, r_mul, r_div, r_rem,
     r_lt, r_eqnum, r_eqp, r_nilp, r_nonep,
-    r_cmp, r_typeof, r_isa, r_size, cons, r_sym,
-    r_str, r_int, car, cdr, r_rplca, r_rplcd,
-    open, close, read, prn, reads,
-    load, r_eval, r_apply,
+    r_cmp, r_typeof, r_isa, r_size, r_cons,
+    r_sym, r_str, r_int, r_dict, r_car,
+    r_cdr, r_rplca, r_rplcd, r_assr, r_assv,
+    r_setr, r_rplcv, r_open, r_close, r_read,
+    r_prn, r_reads, r_load, r_eval, r_apply,
 };
 
   for (int_t i = 0; i < NUM_BUILTINS; i++) {
-    _new_builtin_function(builtin_fnames[i],builtin_argcos[i],builtin_callables[i]);
+    _new_builtin_function(builtin_fnames[i],builtin_argcos[i],builtin_vargs[i],builtin_callables[i]);
   }
   return;
 }
 
 void init_forms() {  
-  static const chr_t* builtin_forms[] = {"setv", "quote", "let",
+  static chr_t* builtin_forms[] = {"setv", "quote", "let",
                                          "do", "fn", "macro", "if" };
 
   for (int_t i = EV_SETV; i < NUM_FORMS; i++) {
@@ -219,8 +235,8 @@ void init_registers() {
   STACK = malloc(MAXSTACK * 8);
   SP = -1;
   GLOBALS = NULL;
-  T = tagi(1);
-  OK = tagi(2);
+  T = tagv(1);
+  OK = tagv(2);
   TOKPTR = 0;
   TOKTYPE = TOK_NONE;
   return;
@@ -325,18 +341,19 @@ void init_builtin_types() {
   symtype->tp_prn = prn_sym;
 
 
-  type_t* tabtype = (type_t*)malloc(sizeof(type_t));
-  TYPES[TYPECODE_TAB] = tabtype;
-  tabtype->head.meta = TYPECODE_TAB;
-  tabtype->head.type = TYPECODE_TYPE;
-  tabtype->flags.base_size = sizeof(tab_t);
-  tabtype->flags.val_lowtag = LOWTAG_OBJPTR;
-  tabtype->flags.atomic = 0;
-  tabtype->flags.callable = 0;
-  tabtype->flags.free = 0;
-  tabtype->tp_new = NIL;
-  tabtype->tp_sizeof = NULL;
-  tabtype->tp_prn = NULL;
+  
+  type_t* dicttype = (type_t*)malloc(sizeof(type_t));
+  TYPES[TYPECODE_DICT] = dicttype;
+  dicttype->head.meta = TYPECODE_DICT;
+  dicttype->head.type = TYPECODE_TYPE;
+  dicttype->flags.base_size = sizeof(dict_t);
+  dicttype->flags.val_lowtag = LOWTAG_OBJPTR;
+  dicttype->flags.atomic = 0;
+  dicttype->flags.callable = 0;
+  dicttype->flags.free = 0;
+  dicttype->tp_new = NIL;
+  dicttype->tp_sizeof = NULL;
+  dicttype->tp_prn = prn_dict;
 
 
   type_t* proctype = (type_t*)malloc(sizeof(type_t));
@@ -406,6 +423,10 @@ void bootstrap_rascal() {
   fprintf(stdout,"Special variables initialized.\n");
   init_forms();
   fprintf(stdout,"Special forms initialized.\n");
+
+  // set the default environment tail
+  ROOT_ENV = cons(tagp(GLOBALS),NIL);
+  intern_builtin("*env*", ROOT_ENV);
 
   fprintf(stdout,"Initialization succeeded.\n");
 }
