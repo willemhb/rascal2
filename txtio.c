@@ -365,16 +365,13 @@ r_tok_t get_token(port_t* p) {
 	}
 
       TOKTYPE = i == TOKPTR ? TOK_NUM : TOK_SYM;
-      break;
+      return TOKTYPE;
    }
-    return TOKTYPE;
   }
 
 
 val_t read_expr(port_t* p) {
-  fputs("entering read_expr\n", stdout);
   r_tok_t t = get_token(p);
-  fprintf(stdout, "the token is %s\n",TOKBUFF);
   int_t numval;
 
   switch (t) {
