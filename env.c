@@ -31,11 +31,12 @@ inline int_t cmphs(const chr_t* sx, uint_t hx, const chr_t* sy, uint_t hy) {
   return cmpv(hx,hy) ? : cmps(sx,sy);
 }
 
-static dict_t* intern_string(const chr_t* s, dict_t** st);
+static dict_t* intern_string(const chr_t*, dict_t**);
+
 
 val_t sym(chr_t* s) {
-  dict_t* cell = intern_string(s,&GLOBALS);
-  sym_t* out = tosym_(key_(cell));
+  dict_t* loc = intern_string(s,&GLOBALS);
+  sym_t* out = tosym_(key_(loc));
   return tagp(out);
 }
 
@@ -52,42 +53,60 @@ sym_t* intern_builtin(const chr_t* s, val_t b) {
   return g_name;
 }
 
-static dict_t* intern_string(const chr_t* s, dict_t** st) {
+static dict_t* intern_string(const chr_t* s, dict_t** d) {
+  dict_t** curr = d;
   hash_t h = hash_string(s);
-  dict_t** curr = st;
 
   while (*curr) {
-    sym_t* currk = tosym_(key_(*curr));
-    int_t c = cmphs(s,h, name_(currk), hash_(currk));
+    sym_t* currk = tosym((*curr)->key);
+    int_t compare = cmphs(s,h,name_(currk),hash_(currk));
 
-    if (c < 0) curr = &(left_(*curr));
-    else if (c > 0) curr = &(right_(*curr));
+    if (compare < 0) curr = &(left_(*curr));
+    else if (compare > 0) curr = &(right_(*curr));
     else break;
   }
 
   if (*curr == NULL) {
-    dict_t* new_t = dict(TYPECODE_SYM);
-    sym_t* new_s = (sym_t*)vm_allocate(sizeof(sym_t)+strlen(s));
-    strcpy(name_(new_s),s);
-    hash_(new_s) = h;
-    type_(new_s) = TYPECODE_SYM;
-    key_(new_t) = tagp(new_s);
-    *curr = new_t;
+    *curr = dict(TYPECODE_SYM);
+    sym_t* new_sym = (sym_t*)vm_allocate(sizeof(sym_t)+strlen(s));
+    type_(new_sym) = TYPECODE_SYM;
+    hash_(new_sym) = h;
+    strcpy(name_(new_sym),s);
+    key_(*curr) = tagp(new_sym);
   }
 
   return *curr;
 }
 
-/* dict_search takes advantage of the interning by doing a simple pointer comparison */
+static dict_t** dict_sym_search(sym_t* s, dict_t** d) {
+  dict_t** curr = d;
+
+  while (*curr) {
+    sym_t* currk = tosym((*curr)->key);
+    int_t compare = cmphs(name_(s),hash_(s),name_(currk),hash_(currk));
+
+    if (compare < 0) curr = &(left_(*curr));
+    else if (compare > 0) curr = &(right_(*curr));
+    else break;
+  }
+
+  return curr;
+}
+
+
 dict_t** dict_searchk(val_t k, dict_t** dict) {
   dict_t** curr = dict;
+
+  if (issym(k) && keytype_(*dict) == TYPECODE_SYM) {
+    return dict_sym_search(tosym(k),dict);
+  }
 
   while (*curr) {
     val_t currk = (*curr)->key;
     int_t order = cmpv(k, currk);
 
     if (order < 0) curr = &((*curr)->left);
-    else if (order > 1) curr = &((*curr)->right);
+    else if (order > 0) curr = &((*curr)->right);
     else break;
     }
 
@@ -139,7 +158,7 @@ dict_t* dict_searchv(val_t v, dict_t* d) {
 dict_t* dict(int_t tc) {
   dict_t* out = (dict_t*)vm_allocate(sizeof(dict_t));
   type_(out) = TYPECODE_DICT;
-  meta_(out) = tc;        
+  keytype_(out) = tc;        
   key_(out) = NONE;                     
   binding_(out) = NONE;                  
   left_(out) = right_(out) = NULL;
@@ -217,7 +236,13 @@ val_t r_assv(val_t v, val_t o) {
     else {
       return NIL;
     }
-  } else {
+  } else if (issym(o)) {
+    if (v == o) {
+      return 0;
+    } else {
+      return NIL;
+    }
+    } else {
     escapef(TYPE_ERR, stderr, "assr only supports dicts and lists.");
   }
 }
@@ -270,14 +295,8 @@ bool isenvnames(val_t n) {
   if (isnil(n)) return true;
   if (!iscons(n)) return false;
 
-  while (iscons(n)) {
-    if (!issym(car_(n))) {
-      return false;
-    }
-    n = cdr_(n);
-  }
+  return isenvnames(car(n)) && isenvnames(cdr(n));
 
-  return isnil(n) || issym(n);
 }
 
 // environments
@@ -301,6 +320,7 @@ val_t vm_asse(val_t v, val_t e) {
       dict_t** result = dict_searchk(v, &local_d);
 
       if (*result == NULL) {
+	fprintf(stdout, "Key not found in dict environment.\n");
 	return vm_asse(v, cdr_(e));
       } else {
 	return tagp(*result);
@@ -308,6 +328,7 @@ val_t vm_asse(val_t v, val_t e) {
     } else if (iscons(locals)) {
       val_t ln = car_(locals);
       val_t lb = cdr_(locals);
+
       val_t i = r_assv(v,ln);
       if (isnil(i)) {
 	return vm_asse(v, cdr_(e));

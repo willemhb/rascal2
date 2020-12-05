@@ -60,7 +60,7 @@ struct obj_t {
 
 /* These macros provide the core api for working with values  and object types */
 
-#define tag(v)           ((v) & 0x7)
+#define tag(v)           ((v) & 0x7ul)
 #define untag(v)         (((val_t)(v)) & ~0x7ul)
 #define val(v)           (((val_t)(v)) >> 32)
 #define ptr(v)           ((void*)untag(v))
@@ -99,14 +99,14 @@ struct obj_t {
 */
 
 typedef enum ltag_t {
-  LOWTAG_DIRECT  =0b000,
-  LOWTAG_CONSPTR =0b001,
-  LOWTAG_LISTPTR =0b010,
-  LOWTAG_STRPTR  =0b011,
-  LOWTAG_OBJPTR  =0b100,
-  LOWTAG_CONSOBJ =0b101,
-  LOWTAG_LISTOBJ =0b110,
-  LOWTAG_STROBJ  =0b111,
+  LOWTAG_DIRECT  =0b000ul,
+  LOWTAG_CONSPTR =0b001ul,
+  LOWTAG_LISTPTR =0b010ul,
+  LOWTAG_STRPTR  =0b011ul,
+  LOWTAG_OBJPTR  =0b100ul,
+  LOWTAG_CONSOBJ =0b101ul,
+  LOWTAG_LISTOBJ =0b110ul,
+  LOWTAG_STROBJ  =0b111ul,
 } ltag_t;
 
 enum {
@@ -120,19 +120,19 @@ enum {
   TYPECODE_PROC,
   TYPECODE_PORT,
   TYPECODE_INT,
+  NUM_BUILTIN_TYPES,
   /* the types below this mark have not been implemented yet */
   TYPECODE_FLOAT, // 32-bit floating point number
   TYPECODE_UCP,   // A UTF-32 code point
   TYPECODE_ANY,
-  NUM_BUILTIN_TYPES = TYPECODE_INT,
 };
 
 // this enum supplies the correct lowtags for builtin direct data.
 
 enum {
-  INT_LOWTAG = (TYPECODE_INT << 3) || LOWTAG_DIRECT,
-  FLOAT_LOWTAG = (TYPECODE_FLOAT << 3) || LOWTAG_DIRECT,
-  UCP_LOWTAG = (TYPECODE_UCP << 3) || LOWTAG_DIRECT,
+  INT_LOWTAG = TYPECODE_INT << 3,
+  FLOAT_LOWTAG = TYPECODE_FLOAT << 3,
+  UCP_LOWTAG = TYPECODE_UCP << 3,
 };
 
 // convenience macros for applying the correct tag to an object
@@ -330,7 +330,7 @@ typedef enum sym_fl {
 val_t hash(val_t);
 chr_t* name(val_t);
 val_t sym(chr_t*);
-chr_t* str(chr_t*);
+chr_t* vm_str(chr_t*);
 // the functions below are intended to help compare uninterned strings to symbols
 int_t cmps(const chr_t*,const chr_t*);
 int_t cmphs(const chr_t*,hash_t,const chr_t*,hash_t);
@@ -506,8 +506,8 @@ typedef enum proc_fl {
   CALLMODE_MACRO,
   BODYTYPE_EXPR=0,
   BODYTYPE_CFNC,
-  VARGS_TRUE=0,
-  VARGS_FALSE,
+  VARGS_FALSE=0,
+  VARGS_TRUE,
 } proc_fl;
 
 /* VM api for procedures */
@@ -553,7 +553,7 @@ typedef enum _r_tok_t {
 
 #define TOKBUFF_SIZE 1024
 chr_t TOKBUFF[TOKBUFF_SIZE];
-chr_t STXERR[512];
+chr_t STXERR[TOKBUFF_SIZE];
 int_t TOKPTR;
 r_tok_t TOKTYPE;
 
@@ -684,7 +684,7 @@ val_t peek();
 
 // evaluator core
 val_t analyze_expr(val_t);
-val_t eval_expr(int_t,val_t,val_t);
+val_t eval_expr(val_t,val_t);
 
 /* rascal api for the evaluator */
 val_t r_eval(val_t,val_t);
@@ -719,10 +719,8 @@ enum {
   EV_IF_TEST,
   EV_IF_ALTERNATIVE,
   EV_IF_NEXT,
-  EV_APPLY_TYPE,
   EV_APPLY_MACRO,
   EV_APPLY_BUILTIN,
-  EV_APPLY_FUNCTION,
   EV_HALT,
 };
 
@@ -737,6 +735,7 @@ enum {
   EVERR_NULLPTR,
   EVERR_SYNTAX,
   EVERR_INDEX,
+  EVERR_APPLICATION,
 };
 
 // save the symbols bound to builtin forms for faster evaluation
@@ -868,7 +867,7 @@ DECLARE(r_nonep,1);
 
 /* int builtin */
 val_t r_int(val_t);
-
+val_t vm_int(int_t);
 #define NUM_BUILTINS 35
 
 /* initialization */

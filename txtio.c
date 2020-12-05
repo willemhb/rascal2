@@ -3,7 +3,7 @@
 /* text and io types */
 
 /* basic string type */
-str_t* str(chr_t* s) {
+str_t* vm_str(chr_t* s) {
   str_t* out = (str_t*)vm_allocate(strlen(s) + 1);
   strcpy(out,s);
   return out;
@@ -47,7 +47,7 @@ val_t r_reads(val_t p) {
   chr_t* out = fgets(buffer,512,port->stream);
 
   if (out == NULL) escapef(IO_ERR,stdout,"Failed to read string from port.");
-  return tagp(str(out));
+  return tagp(vm_str(out));
 }
 
 val_t r_load(val_t fname) {
@@ -115,27 +115,7 @@ int_t vm_close(port_t* p) {
 
 void prn_int(val_t v,port_t* p) {
   int_t i = toint(v);
-  if (!i) {
-    vm_putc(p, '0');
-    return;
-  }
-
-  if (i < 1) {
-    vm_putc(p, '-');
-    i *= -1;
-  }
-
-  chr_t digits[16];
-  int_t c = 0;
-  while (i) {
-    digits[c] = i % 10;
-    i /= 10;
-    c++;
-  }
-
-  for (int_t j = c; j >= 0; j--) {
-    vm_putc(p, digits[j]);
-  }
+  fprintf(stream_(p),"%d",i);
 
   return;
 }
@@ -156,7 +136,7 @@ void prn_cons(val_t c, port_t* p) {
   vm_putc(p, '(');
 
   if (!islist(c)) {
-    vm_prn(car_(c), p);
+    vm_prn(car_(c),p);
     vm_puts(p, " . ");
     vm_prn(cdr_(c), p);
 
@@ -296,8 +276,9 @@ r_tok_t get_token(port_t* p) {
   }
 
   TOKPTR = 0;
-  int_t ch;
-  while ((ch = vm_getc(p)) != EOF) {
+  chr_t ch;
+  while (vm_peekc(p) != EOF) {
+    ch = vm_getc(p);
     if (isspace(ch)) {
       continue;
     } else if (ch == ';') {
@@ -342,32 +323,27 @@ r_tok_t get_token(port_t* p) {
       return TOKTYPE;
     default:
       accumtok(ch);
-      while ((ch = vm_peekc(p)) != EOF) {
-	if (isspace(ch)) {
-	  accumtok('\0');
-	  break;
-	} else if (ch == ')') {
-	  accumtok('\0');
-	  break;
-	} else {
+      while ((ch = vm_peekc(p)) != EOF && ch != ')' && !isspace(ch)) {
+	  vm_getc(p);
 	  accumtok(ch);
 	}
-      }
-	int_t i;
-	for (i = 0; i < TOKPTR; i++) {
+
+      accumtok('\0');
+
+	TOKTYPE = TOK_NUM;
+	for (int_t i = 0; TOKBUFF[i] != '\0'; i++) {
 	  if (!isdigit(TOKBUFF[i])) {
 	    if ((TOKBUFF[i] == '+' || TOKBUFF[i] == '-') && i == 0 && strlen(TOKBUFF) > 1) {
 	      continue;
 	    } else {
+	      TOKTYPE = TOK_SYM;
 	      break;
 	    }
 	  }
 	}
-
-      TOKTYPE = i == TOKPTR ? TOK_NUM : TOK_SYM;
       return TOKTYPE;
-   }
-  }
+    }
+}
 
 
 val_t read_expr(port_t* p) {
@@ -382,7 +358,7 @@ val_t read_expr(port_t* p) {
 
   case TOK_STR:
     take();
-    return tagp(str(TOKBUFF));
+    return tagp(vm_str(TOKBUFF));
 
   case TOK_SYM:
     take();
@@ -401,7 +377,8 @@ val_t read_expr(port_t* p) {
   case TOK_RPAR:
   case TOK_STXERR:
   default:
-    escapef(SYNTAX_ERR,stderr, "%s", STXERR);
+    sprintf(STXERR, "%s", TOKBUFF);
+    escapef(SYNTAX_ERR,stderr,"%s",STXERR);
 
   case TOK_EOF:
     return NIL;
@@ -410,9 +387,9 @@ val_t read_expr(port_t* p) {
 
 val_t read_cons(port_t* p) {
   val_t out = NIL, curr;
-  get_token(p);
+  r_tok_t t;
 
-  while (TOKTYPE != TOK_RPAR && TOKTYPE != TOK_DOT && TOKTYPE != TOK_STXERR) {
+  while ((t = get_token(p)) != TOK_RPAR && t != TOK_DOT && t != TOK_STXERR) {
     curr = read_expr(p);
     append(&out,curr);
   }
@@ -457,5 +434,5 @@ val_t vm_load(port_t* p) {
     append(&out, exp);        //this can be written be better
   }
 
-  return eval_expr(-1,out,NIL);
+  return eval_expr(out,ROOT_ENV);
 }

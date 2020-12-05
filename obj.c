@@ -3,18 +3,25 @@
 /* type utilities */
 uint_t typecode(val_t v) {
   uint_t t = tag(v);
+  uint_t tc;
   switch (t) {
   case LOWTAG_CONSPTR:
+    tc = TYPECODE_CONS;
+    break;
   case LOWTAG_STRPTR:
-    return t;
+    tc = TYPECODE_STR;
+    break;
   case LOWTAG_LISTPTR:
-    return TYPECODE_CONS;
+    tc = TYPECODE_CONS;
+    break;
   case LOWTAG_DIRECT:
-    return (v & UINT_MAX) >> 3;
+    tc = ((v&UINT32_MAX) >> 3);
+    break;
   case LOWTAG_OBJPTR:
   default:
-    return obj(v)->head.type;
+    tc = obj(v)->head.type;
   }
+  return tc;
 }
 
 type_t* type_of(val_t v) {
@@ -22,8 +29,10 @@ type_t* type_of(val_t v) {
 }
 
 const chr_t* typename(val_t v) {
-static const chr_t* builtin_typenames[] = { "nil-type", "cons", "none-type", "str",
-                                            "type", "sym", "dict", "proc", "port", "int", };
+static chr_t* builtin_typenames[NUM_BUILTIN_TYPES] = {
+  "nil-type", "cons", "none-type", "str",
+  "type", "sym", "dict", "proc", "port",
+  "int", };
 
   int_t t = typecode(v);
 
@@ -296,7 +305,7 @@ inline bool islist(val_t v) {
 // tagging helper
 inline val_t tagc(cons_t* c) {
   if (c == NULL) {
-    escapef(NULLPTR_ERR,stderr,"Unexpected null pointer in tagc.");
+    return NIL;
   }
   
   if (islist(cdr_(c))) {
@@ -307,7 +316,7 @@ inline val_t tagc(cons_t* c) {
 }
 
 inline val_t car(val_t v) {
-  cons_t* c = toc(v);
+  cons_t* c = tocons(v);
   return car_(c);
 }
 
@@ -361,7 +370,10 @@ inline int_t ncells(val_t c) {
 
   int_t count = 0;
   
-  while (isc(c)) count++;
+  while (isc(c)) {
+    count++;
+    c = cdr_(c);
+  }
 
   if (c == NIL) {
     return count;

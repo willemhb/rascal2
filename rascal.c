@@ -6,14 +6,15 @@ void repl() {
     int_t error = setjmp(SAFETY);
 
     if (error) {
-      fprintf(stderr,"Error caused escape to the top level.");
+      fprintf(stderr,"Error caused escape to the top level.\n");
       return;
     }
     
     r_prn(R_PROMPT, R_STDOUT);
     val_t expr = r_read(R_STDIN);
-    eval_expr(-1,expr,ROOT_ENV);
-    r_prn(expr,R_STDOUT);
+    val_t result = eval_expr(expr,ROOT_ENV);
+    fprintf(stdout, ">>> ");
+    r_prn(result,R_STDOUT);
     vm_puts(toport_(R_STDOUT),"\n");
   }
 }

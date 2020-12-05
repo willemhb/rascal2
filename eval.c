@@ -9,11 +9,13 @@ val_t new_proc(val_t formals, val_t env, val_t body, proc_fl callmode, proc_fl b
     argco = formals;
     vargs = VARGS_FALSE; // this flag should be explicitly altered during initialization
     formals = NIL;
+
   } else if (!isenvnames(formals)) {
     escapef(TYPE_ERR, stderr, "Malformed argument list.");
   } else {
     argco = ncells(formals);
     vargs = islist(formals) ? VARGS_FALSE : VARGS_TRUE;
+    fprintf(stdout, "%d\n", vargs);
   }
 
   proc_t* obj = (proc_t*)vm_allocate(sizeof(proc_t));
@@ -47,6 +49,7 @@ inline val_t invoke(val_t (*behavior)(), int_t argco, val_t argl, bool vargs) {
       escapef(ARITY_ERR,stderr,"Expected %d, got %d", argco, i);
     }
     argarray[i] = car_(argl);
+    argl = cdr_(argl);
   }
 
   if (argl != NIL && !vargs) {
@@ -87,7 +90,9 @@ inline val_t pop() {
     escapef(OVERFLOW_ERR,stderr,"pop on empty stack");
   }
 
-  return STACK[--SP];
+  val_t out = STACK[SP];
+  SP--;
+  return out;
 }
 
 inline val_t peek() {
@@ -105,18 +110,14 @@ val_t vm_analyze(val_t x) {
   case TYPECODE_SYM:
     return EV_VARIABLE;
   case TYPECODE_CONS:
+    if (!islist(x)) {
+      return EV_LITERAL;
+    }
     for (i=0; i < NUM_FORMS; i++) {
-      if (car_(x) == BUILTIN_FORMS[i]) return i;
-
-      else x = cdr_(x);
-      
-      if (!iscons(x)) break;
+      if (car_(x) == BUILTIN_FORMS[i]) {
+	return i;
+      }
     }
-
-    if (i < NUM_FORMS) {
-      return EV_LITERAL;  // read dotted lists as literals
-    }
-
     return EV_APPLY;
 
   default:
@@ -125,23 +126,42 @@ val_t vm_analyze(val_t x) {
 }
 
 
-val_t eval_expr(int_t start, val_t x,  val_t e) {
+val_t eval_expr(val_t x,  val_t e) {
 
   static void* labels[] = {
-                            &&ev_setv, &&ev_quote, &&ev_let, &&ev_do,
-                            &&ev_fn, &&ev_macro, &&ev_if, &&ev_literal,
-			    &&ev_variable, &&ev_assign, &&ev_assign_end, &&ev_apply,
-			    &&ev_apply_op_done, &&ev_apply_argloop, &&ev_apply_accumarg,
-			    &&ev_apply_dispatch, &&ev_return, &&ev_macro_return,
-			    &&ev_sequence_start, &&ev_sequence_loop, &&ev_setv_assign,
-			    &&ev_let_argloop, &&ev_if_test, &&ev_if_alternative,
-			    &&ev_if_next, &&ev_apply_macro, &&ev_apply_builtin,
+                            &&ev_setv,
+			    &&ev_quote,
+			    &&ev_let,
+			    &&ev_do,
+                            &&ev_fn,
+			    &&ev_macro,
+			    &&ev_if,
+			    &&ev_literal,
+			    &&ev_variable,
+			    &&ev_assign,
+			    &&ev_assign_end,
+			    &&ev_apply,
+			    &&ev_apply_op_done,
+			    &&ev_apply_argloop,
+			    &&ev_apply_accumarg,
+			    &&ev_apply_dispatch,
+			    &&ev_return,
+			    &&ev_macro_return,
+			    &&ev_sequence_start,
+			    &&ev_sequence_loop,
+			    &&ev_setv_assign,
+			    &&ev_let_argloop,
+			    &&ev_if_test,
+			    &&ev_if_alternative,
+			    &&ev_if_next,
+			    &&ev_apply_macro,
+			    &&ev_apply_builtin,
 			    &&ev_halt,
   };
 
   static void* errors[] = { &&everr_unknown, &&everr_type, &&everr_value, &&everr_arity,
                             &&everr_unbound, &&everr_overflow, &&everr_io, &&everr_nullptr,
-			    &&everr_syntax, &&everr_index };
+			    &&everr_syntax, &&everr_index, &&everr_application, };
 
   r_errc_t error = setjmp(SAFETY);
 
@@ -168,7 +188,6 @@ val_t eval_expr(int_t start, val_t x,  val_t e) {
   ENV = isnone(e) ? ENV : e;
   CONTINUE = EV_HALT;
 
-  branch(start != -1, start);
   dispatch(EXP);
 
  ev_halt:
@@ -186,6 +205,7 @@ val_t eval_expr(int_t start, val_t x,  val_t e) {
   
  everr_type: everr_value: everr_arity:
  everr_unbound: everr_syntax: everr_index:
+ everr_application:
   eprintf(error,stderr,"The error caused eval to fail, but not fatally.");
   return NONE;
 
@@ -223,8 +243,9 @@ val_t eval_expr(int_t start, val_t x,  val_t e) {
   jump(CONTINUE);
 
  ev_variable:
-  VAL = vm_asse(EXP,ENV);
-  failf(VAL == NONE, UNBOUND_ERR, "Unbound symbol error.");
+  WRX = vm_asse(EXP,ENV);
+  failf(WRX == NONE, UNBOUND_ERR, "Unbound symbol error.");
+  VAL = iscons(WRX) ? car_(WRX) : binding_(WRX);
 
   jump(CONTINUE);
 
@@ -236,8 +257,8 @@ val_t eval_expr(int_t start, val_t x,  val_t e) {
  ev_setv:
   save(CONTINUE);
   CONTINUE = EV_SETV_ASSIGN;
-  EXP = cxr(EXP,ADD);
-  save(EXP);
+  UNEV = cxr(EXP,ADD);
+  save(UNEV);
   EXP = cxr(EXP,AD);
 
   dispatch(EXP);
@@ -246,7 +267,8 @@ val_t eval_expr(int_t start, val_t x,  val_t e) {
   failf(!issym(VAL),TYPE_ERR, "Attempt to assign to non-symbol");
   failf(fl_const_(tosym_(VAL)), VALUE_ERR, "Attempt to reassign constant symbol %s", name_(VAL));
   NAME = VAL;
-  restore(EXP);
+  restore(UNEV);
+  EXP = UNEV;
   restore(CONTINUE);
 
   jump(EV_ASSIGN);
@@ -263,8 +285,8 @@ val_t eval_expr(int_t start, val_t x,  val_t e) {
 
  ev_assign_end:
   restore(CONTINUE);
-  restore(NAME);
   restore(ENV);
+  restore(NAME);
 
   vm_sete(NAME, VAL, ENV);
 
@@ -314,7 +336,7 @@ val_t eval_expr(int_t start, val_t x,  val_t e) {
  ev_apply_argloop:
   branch(UNEV == NIL, EV_APPLY_DISPATCH);
 
-  EXP = car_(UNEV);
+  EXP = car(UNEV);
 
   save(ENV);
   save(ARGL);
@@ -338,7 +360,7 @@ val_t eval_expr(int_t start, val_t x,  val_t e) {
 
   branch(bodytype_(PROC) == BODYTYPE_CFNC, EV_APPLY_BUILTIN);
 
-  failf(check_argco(argco_(PROC),ARGL,vargs_(PROC)), ARITY_ERR, "Incorrect arity.");
+  failf(!check_argco(argco_(PROC),ARGL,vargs_(PROC)), ARITY_ERR, "expected %d, got %d.",argco_(PROC),ncells(ARGL));
 
   save(ENV);          // save for after procedure application
   save(CONTINUE);     // restore after procedure application
@@ -350,7 +372,7 @@ val_t eval_expr(int_t start, val_t x,  val_t e) {
   goto ev_sequence_start;
 
  ev_apply_builtin:
-  VAL = invoke((val_t (*)())(body_(PROC)),argco_(PROC),vargs_(PROC), ARGL);
+  VAL = invoke((val_t (*)())(body_(PROC)),argco_(PROC),ARGL,vargs_(PROC));
   jump(CONTINUE);
 
  ev_apply_macro:

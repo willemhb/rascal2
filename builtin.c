@@ -10,16 +10,19 @@
 #define IS_ZERO(x) (x == 0)
 
 
-DESCRIBE_ARITHMETIC(r_add,ADD,r_int)
-DESCRIBE_ARITHMETIC(r_sub,SUB,r_int)
-DESCRIBE_ARITHMETIC(r_div,DIV,r_int)
-DESCRIBE_ARITHMETIC(r_mul,MUL,r_int)
-DESCRIBE_ARITHMETIC(r_rem,REM,r_int)
+DESCRIBE_ARITHMETIC(r_add,ADD,vm_int)
+DESCRIBE_ARITHMETIC(r_sub,SUB,vm_int)
+DESCRIBE_ARITHMETIC(r_div,DIV,vm_int)
+DESCRIBE_ARITHMETIC(r_mul,MUL,vm_int)
+DESCRIBE_ARITHMETIC(r_rem,REM,vm_int)
 DESCRIBE_ARITHMETIC(r_eqnum,EQL,cbooltorbool)
 DESCRIBE_ARITHMETIC(r_lt,LT,cbooltorbool)
 DESCRIBE_PREDICATE(r_nilp,isnil)
 DESCRIBE_PREDICATE(r_nonep,isnone)
 
+inline val_t vm_int(int_t i) {
+  return tagv(i);
+}
 
 inline val_t r_isa(val_t v, val_t t) {
   type_t* tp = totype(t);
@@ -55,14 +58,14 @@ val_t r_rplcd(val_t cd,val_t d) {
 }
 
 val_t r_eval(val_t x,val_t e) {
-  return eval_expr(-1,x,e);
+  return eval_expr(x,e);
 }
 
 val_t r_apply(val_t p, val_t args) {
   val_t mock_proc = cons(p,NIL);
   cdr_(mock_proc) = args;
 
-  return eval_expr(-1,mock_proc,NONE);
+  return eval_expr(mock_proc,NONE);
 }
 
 
@@ -90,10 +93,10 @@ val_t r_str(val_t v) {
   val_t out;
   switch(typecode(v)) {
   case TYPECODE_SYM:
-    return tagp(str(name_(v)));
+    return tagp(vm_str(name_(v)));
   case TYPECODE_INT:
     b = itoa(toint_(v),10);
-    out = tagp(str(b));
+    out = tagp(vm_str(b));
     free(b);
     return out;
   case TYPECODE_STR:
@@ -118,7 +121,7 @@ val_t r_int(val_t v) {
 }
 
 void _new_builtin_function(const chr_t* fname, int_t argc, bool vargs, const void* f) {
-  val_t obj = new_proc(tagv(argc),NIL,((val_t)f),CALLMODE_FUNC,BODYTYPE_CFNC);
+  val_t obj = new_proc(argc,NIL,((val_t)f),CALLMODE_FUNC,BODYTYPE_CFNC);
   if (vargs) {
     vargs_(obj) = VARGS_TRUE;
   }
@@ -208,7 +211,7 @@ void init_special_variables() {
   intern_builtin("stderr",r_stderr);
   R_STDERR = r_stderr;
 
-  intern_builtin("*globals*",tagp(GLOBALS));
+  // intern_builtin("*globals*",tagp(GLOBALS));
   R_PROMPT = tagp(sym("rsc> "));
   intern_builtin("*prompt*",R_PROMPT);
 
@@ -229,14 +232,14 @@ void init_heap() {
 }
 
 void init_registers() {
-  NIL = 0; NONE = TYPECODE_NONE << 3; FPTR = LOWTAG_CONSOBJ;
+  NIL = 0ul; NONE = TYPECODE_NONE << 3; FPTR = LOWTAG_CONSOBJ;
   EXP = VAL = CONTINUE = NAME = ENV = UNEV = ARGL = PROC = NIL;
   WRX = WRY = WRZ = NIL;
   STACK = malloc(MAXSTACK * 8);
   SP = -1;
   GLOBALS = NULL;
-  T = tagv(1);
-  OK = tagv(2);
+  T = tagval(1, INT_LOWTAG);
+  OK = tagval(2, INT_LOWTAG);
   TOKPTR = 0;
   TOKTYPE = TOK_NONE;
   return;
@@ -249,8 +252,8 @@ void init_types() {
 }
 
 void init_builtin_types() {
-  static const chr_t* builtin_typenames[] = { "nil-type", "cons", "none-type", "str",
-                                            "type", "sym", "tab", "proc", "port", "int", };
+  static chr_t* builtin_typenames[] = { "nil-type", "cons", "none-type", "str",
+                                        "type", "sym", "tab", "proc", "port", "int", };
   /* 
 
      the builtin types are initialized with their names set to null; their names are interned
@@ -426,7 +429,6 @@ void bootstrap_rascal() {
 
   // set the default environment tail
   ROOT_ENV = cons(tagp(GLOBALS),NIL);
-  intern_builtin("*env*", ROOT_ENV);
 
   fprintf(stdout,"Initialization succeeded.\n");
 }
