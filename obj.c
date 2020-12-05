@@ -62,6 +62,9 @@ inline bool callable(val_t v) {
   return t == TYPECODE_TYPE || t == TYPECODE_PROC;
 }
 
+inline bool cmpable(val_t v) {
+  return type_of(v)->flags.cmpable;
+}
 
 int_t vm_size(val_t v) {
   int_t t = typecode(v);

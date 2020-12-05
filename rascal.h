@@ -192,6 +192,7 @@ type_t* type_of(val_t);
 const chr_t* typename(val_t);
 bool callable(val_t);
 bool atomic(val_t);
+bool cmpable(val_t);
 int_t vm_size(val_t);
 // generic comparison
 int_t cmpv(val_t,val_t);
@@ -332,8 +333,14 @@ chr_t* name(val_t);
 val_t sym(chr_t*);
 chr_t* vm_str(chr_t*);
 // the functions below are intended to help compare uninterned strings to symbols
+int_t cmpi(int_t,int_t);
+int_t cmpui(uint_t,uint_t);
 int_t cmps(const chr_t*,const chr_t*);
 int_t cmphs(const chr_t*,hash_t,const chr_t*,hash_t);
+int_t cmp_sym(val_t,val_t);
+int_t cmp_int(val_t,val_t);
+int_t cmp_str(val_t,val_t);
+int_t cmp_type(val_t,val_t);
 /* 
    rascal api for symbols and strings
  */
@@ -366,17 +373,22 @@ struct dict_t {
   dict_t* right;
 };
 
+typedef enum dict_fl {
+  GENERAL_KEYS,
+  SYMBOL_KEYS,
+} dict_fl;
+
+
 #define key_(d)     FAST_ACCESSOR_MACRO(d,dict_t*,key)
 #define binding_(d) FAST_ACCESSOR_MACRO(d,dict_t*,binding)
 #define left_(d)    FAST_ACCESSOR_MACRO(d,dict_t*,left)
 #define right_(d)   FAST_ACCESSOR_MACRO(d,dict_t*,right)
-#define keytype_(d) FAST_ACCESSOR_MACRO(d,dict_t*,head.meta)
+#define keytype_(d) FAST_ACCESSOR_MACRO(d,dict_t*,head.flags_0)
+
 
 /* vm api for dicts */
-dict_t* dict(int_t); // This argument indicates whether or not
-                     // the dict's keys are typed; only access-
-                     // ible within the VM, to ensure the
-                     // global symbols table isn't polluted
+dict_t* dict();
+
 
 sym_t* intern_builtin(const chr_t*,val_t);
 dict_t** dict_searchk(val_t,dict_t**);
@@ -448,7 +460,7 @@ val_t r_rplcv(val_t,val_t,val_t);
  */
 bool  isenvnames(val_t);
 val_t new_env(val_t,val_t,val_t);
-val_t vm_asse(val_t,val_t);
+val_t vm_gete(val_t,val_t);
 val_t vm_pute(val_t,val_t);
 val_t vm_sete(val_t,val_t,val_t);
 
@@ -460,24 +472,23 @@ struct type_t {
     struct {
       val_t base_size : 16;  // the minimum size (in bytes) for objects of this type.
       val_t val_lowtag : 3;  // the lowtag that should be used for objects of this type.
+      val_t cmpable : 1;     // implements cmp
       val_t atomic : 1;      // can values be used as a table key?
       val_t callable : 1;    // can values be used as a function?
-      val_t free : 44;
+      val_t free : 43;
     } flags;
   /* the rascal-callable constructor */
     val_t tp_new;
-    // the vm-callable C function to allocate and initialize a new value (NULL for direct data)
-    // the vm-callable C function to get a value's size in bytes (can be NULL)
+    int_t (*tp_cmp)(val_t,val_t);
     uint_t (*tp_sizeof)();
-    // the vm-callable C function to print or write a value of this type
     void (*tp_prn)(val_t, port_t*);
-    // the authoritative type name
     sym_t* tp_name;
 };
 
 #define typecode_self_(t)  meta_(t)
 #define fl_base_size_(t)    ((t)->flags.base_size)
 #define fl_val_lowtag_(t)   ((t)->flags.val_lowtag)
+#define fl_cmpable_(t)      ((t)->flags.cmpable)
 #define fl_atomic_(t)       ((t)->flags.atomic)
 #define fl_callable_(t)     ((t)->flags.callable)
 
@@ -573,6 +584,7 @@ int_t vm_peekc(port_t*);
 int_t vm_puts(port_t*, chr_t*);
 str_t* vm_gets(port_t*,int_t);
 /* reader internal */
+chr_t* toktype_name(r_tok_t);
 r_tok_t get_token(port_t*);
 val_t read_expr(port_t*);
 val_t read_cons(port_t*);

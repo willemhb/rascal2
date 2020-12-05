@@ -5,9 +5,6 @@
 # don't track the actual executables
 rascal
 
-# ignore core dumps
-core.*
-
 # ignore the contents of log
 log/*
 

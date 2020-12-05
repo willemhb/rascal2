@@ -261,6 +261,16 @@ static void take() {
   TOKTYPE = TOK_NONE;
 }
 
+chr_t* toktype_name(r_tok_t toktype) {
+  static chr_t* toktype_names[] = {
+    "LPAR", "RPAR", "DOT", "QUOT",
+    "NUM", "STR", "SYM", "EOF",
+    "NONE", "STXERR",
+  };
+
+  return toktype_names[toktype];
+}
+
 /* tokenizer */
 static void accumtok(chr_t c) {
   if (TOKPTR == TOKBUFF_SIZE - 1) {
@@ -282,7 +292,8 @@ r_tok_t get_token(port_t* p) {
     if (isspace(ch)) {
       continue;
     } else if (ch == ';') {
-      while ((ch = vm_getc(p)) != EOF && ch != '\n') {
+      while ((ch = vm_peekc(p)) != EOF && ch != '\n') {
+	vm_getc(p);
 	continue;
       }
 
@@ -378,7 +389,7 @@ val_t read_expr(port_t* p) {
   case TOK_STXERR:
   default:
     sprintf(STXERR, "%s", TOKBUFF);
-    escapef(SYNTAX_ERR,stderr,"%s",STXERR);
+    escapef(SYNTAX_ERR,stderr,"%s : TOKTYPE: %s",STXERR,toktype_name(TOKTYPE));
 
   case TOK_EOF:
     return NIL;
@@ -398,7 +409,7 @@ val_t read_cons(port_t* p) {
   if (TOKTYPE == TOK_DOT) {
     val_t* tail = &out;
     while (iscons(*tail)) tail = &cdr_(*tail);
-
+    take();  // clear the dot token
     *tail = read_expr(p);
     if (get_token(p) != TOK_RPAR) escapef(SYNTAX_ERR,stderr,"Malformed dotted list.");
   }
@@ -426,7 +437,7 @@ val_t vm_read(port_t* p) {
 */
 
 val_t vm_load(port_t* p) {
-  val_t out = cons(sym("do"),NIL);
+  val_t out = NIL;
 
   while (true) {
     val_t exp = vm_read(p);
@@ -434,5 +445,10 @@ val_t vm_load(port_t* p) {
     append(&out, exp);        //this can be written be better
   }
 
-  return eval_expr(out,ROOT_ENV);
+  out = cons(sym("do"),out);
+
+  fputs("load successful, beginning eval of ", stdout);
+  r_prn(out, R_STDOUT);
+  fputs("\n",stdout);
+  return OK;
 }

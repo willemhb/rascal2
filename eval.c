@@ -243,9 +243,8 @@ val_t eval_expr(val_t x,  val_t e) {
   jump(CONTINUE);
 
  ev_variable:
-  WRX = vm_asse(EXP,ENV);
-  failf(WRX == NONE, UNBOUND_ERR, "Unbound symbol error.");
-  VAL = iscons(WRX) ? car_(WRX) : binding_(WRX);
+  VAL = vm_gete(EXP,ENV);
+  failf(VAL == NONE, UNBOUND_ERR, "Unbound symbol error.");
 
   jump(CONTINUE);
 
@@ -378,7 +377,7 @@ val_t eval_expr(val_t x,  val_t e) {
  ev_apply_macro:
   ARGL = UNEV;
 
-  failf(check_argco(argco_(PROC),ARGL,vargs_(PROC)), ARITY_ERR, "Incorrect arity.");
+  failf(!check_argco(argco_(PROC),ARGL,vargs_(PROC)), ARITY_ERR, "Incorrect arity.");
 
   save(ENV);
   save(CONTINUE);
@@ -454,10 +453,11 @@ val_t eval_expr(val_t x,  val_t e) {
 
   } else {
     NAME = car_(ARGL);
-    failf(!issym(NAME),TYPE_ERR,"Let bindings must be symbols.");
+    failf(!issym(NAME),TYPE_ERR,"Let bindings must be symbols, name has type %s.",typename(NAME));
     ARGL = cdr_(ARGL);
     failf(ARGL == NIL, ARITY_ERR, "Unpaired let binding.");
     EXP = car_(ARGL);
+    ARGL = cdr_(ARGL);
     vm_pute(NAME,ENV);
     save(ARGL);
 
@@ -465,17 +465,17 @@ val_t eval_expr(val_t x,  val_t e) {
   }
 
  ev_if_test:
-  restore(CONTINUE);
   restore(UNEV);
+  restore(CONTINUE);
 
-  branch(VAL == NIL || VAL == NONE, EV_IF_ALTERNATIVE);
+  branch(!rbooltocbool(VAL), EV_IF_ALTERNATIVE);
   
   EXP = car_(UNEV);
   dispatch(EXP);
   
  ev_if_alternative:
   UNEV = cdr_(UNEV);               // drop the consequent
-  branch(UNEV == NIL, CONTINUE);   // the value of the if form is NIL if no alternative is supplied 
+  branch(UNEV == NIL, CONTINUE);   // the value of the if form is NIL if no alternative given 
   EXP = car_(UNEV);                // get the next expression to be tried
   UNEV = cdr_(UNEV);
   branch(UNEV != NIL, EV_IF_NEXT); // if UNEV is not NIL, treat this as another predicate
@@ -483,8 +483,8 @@ val_t eval_expr(val_t x,  val_t e) {
   dispatch(EXP);
 
   ev_if_next:
-    save(UNEV);
     save(CONTINUE);
+    save(UNEV);
 
     CONTINUE = EV_IF_TEST;
 

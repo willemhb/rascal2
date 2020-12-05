@@ -269,12 +269,13 @@ void init_builtin_types() {
   niltype->flags.base_size = 8;
   niltype->flags.val_lowtag = LOWTAG_DIRECT;
   niltype->flags.atomic = 1;
+  niltype->flags.cmpable = 1;
   niltype->flags.callable = 0;
   niltype->flags.free = 0;
+  niltype->tp_cmp = NULL;
   niltype->tp_new = NIL;
   niltype->tp_sizeof = NULL;
   niltype->tp_prn = NULL;
-
   // cons type
   type_t* constype = (type_t*)malloc(sizeof(type_t));
   TYPES[TYPECODE_CONS] = constype;
@@ -284,7 +285,9 @@ void init_builtin_types() {
   constype->flags.val_lowtag = LOWTAG_CONSPTR;
   constype->flags.atomic = 0;
   constype->flags.callable = 0;
+  constype->flags.cmpable = 0;
   constype->flags.free = 0;
+  constype->tp_cmp = NULL;
   constype->tp_new = NIL;
   constype->tp_sizeof = NULL;
   constype->tp_prn = prn_cons;
@@ -298,6 +301,8 @@ void init_builtin_types() {
   nonetype->flags.atomic = 1;
   nonetype->flags.callable = 0;
   nonetype->flags.free = 0;
+  nonetype->flags.cmpable = 1;
+  nonetype->tp_cmp = NULL;
   nonetype->tp_new = NIL;
   nonetype->tp_sizeof = NULL;
   nonetype->tp_prn = NULL;
@@ -312,6 +317,8 @@ void init_builtin_types() {
   strtype->flags.atomic = 0;
   strtype->flags.callable = 0;
   strtype->flags.free = 0;
+  strtype->flags.cmpable = 1;
+  strtype->tp_cmp = cmp_str;
   strtype->tp_new = NIL;
   strtype->tp_sizeof = NULL;
   strtype->tp_prn = prn_str;
@@ -324,7 +331,9 @@ void init_builtin_types() {
   typetype->flags.val_lowtag = LOWTAG_OBJPTR;
   typetype->flags.atomic = 1;
   typetype->flags.callable = 1;
+  typetype->flags.cmpable = 1;
   typetype->flags.free = 0;
+  typetype->tp_cmp = cmp_type;
   typetype->tp_new = NIL;
   typetype->tp_sizeof = NULL;
   typetype->tp_prn = prn_type;
@@ -338,7 +347,9 @@ void init_builtin_types() {
   symtype->flags.val_lowtag = LOWTAG_STROBJ;
   symtype->flags.atomic = 1;
   symtype->flags.callable = 0;
+  symtype->flags.cmpable = 1;
   symtype->flags.free = 0;
+  symtype->tp_cmp = cmp_sym;
   symtype->tp_new = NIL;
   symtype->tp_sizeof = NULL;
   symtype->tp_prn = prn_sym;
@@ -354,6 +365,8 @@ void init_builtin_types() {
   dicttype->flags.atomic = 0;
   dicttype->flags.callable = 0;
   dicttype->flags.free = 0;
+  dicttype->flags.cmpable = 0;
+  dicttype->tp_cmp = NULL;
   dicttype->tp_new = NIL;
   dicttype->tp_sizeof = NULL;
   dicttype->tp_prn = prn_dict;
@@ -368,6 +381,8 @@ void init_builtin_types() {
   proctype->flags.atomic = 0;
   proctype->flags.callable = 0;
   proctype->flags.free = 0;
+  proctype->flags.cmpable = 0;
+  proctype->tp_cmp = NULL;
   proctype->tp_new = NIL;
   proctype->tp_sizeof = NULL;
   proctype->tp_prn = prn_proc;
@@ -382,6 +397,8 @@ type_t* porttype = (type_t*)malloc(sizeof(type_t));
   porttype->flags.atomic = 0;
   porttype->flags.callable = 0;
   porttype->flags.free = 0;
+  porttype->flags.cmpable = 0;
+  porttype->tp_cmp = NULL;
   porttype->tp_new = NIL;
   porttype->tp_sizeof = NULL;
   porttype->tp_prn = NULL;
@@ -396,6 +413,8 @@ type_t* inttype = (type_t*)malloc(sizeof(type_t));
   inttype->flags.atomic = 0;
   inttype->flags.callable = 0;
   inttype->flags.free = 0;
+  inttype->flags.cmpable = 1;
+  inttype->tp_cmp = cmp_int;
   inttype->tp_new = NIL;
   inttype->tp_sizeof = NULL;
   inttype->tp_prn = prn_int;

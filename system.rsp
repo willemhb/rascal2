@@ -1,0 +1,21 @@
+;; core builtins for rascal
+
+;; list function
+(setv 'list (fn args args))
+
+(setv 'setq (macro (n b) (list setv (list quote n) b)))
+
+(setq def setq)
+
+(setq defun
+      (macro (name args . body)
+	     (list 'def name (cons 'fn (cons args body)))))
+
+(setq defmac
+      (macro (name args . body)
+	     (list 'def name (cons 'macro (cons args body)))))
+
+(defun append (xs ys)
+  (if
+      (nil? xs) ys
+      (cons (car xs) (append (cdr xs) ys))))
