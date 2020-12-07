@@ -2,11 +2,12 @@
 *.el
 *~
 
+
 # don't track the actual executables
 rascal
 
-# undo ignore core dumps
-!.core.*
+# ignore core dumps
+/dumps/.core.*
 
 # ignore the contents of log
 log/*
