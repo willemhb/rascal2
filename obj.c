@@ -1,5 +1,44 @@
 #include "rascal.h"
 
+/* safecasts and checking forwarding pointers */
+DESCRIBE_VAL_SAFECAST(int_t,int)
+DESCRIBE_VAL_SAFECAST(ucp_t,ucp)
+DESCRIBE_PTR_SAFECAST(cons_t*,cons)
+DESCRIBE_PTR_SAFECAST(sym_t*,sym)
+DESCRIBE_PTR_SAFECAST(dict_t*,dict)
+DESCRIBE_PTR_SAFECAST(type_t*,type)
+DESCRIBE_PTR_SAFECAST(str_t*,str)
+DESCRIBE_PTR_SAFECAST(port_t*,port)
+DESCRIBE_PTR_SAFECAST(proc_t*,proc)
+
+bool check_fptr(val_t v) {
+  if (tag(v) == LOWTAG_DIRECT) return false;
+  cons_t* cell = tocons_(v);
+  return car_(cell) == FPTR; 
+}
+
+val_t get_fptr(val_t v) {
+  if (check_fptr(v)) {
+    return cdr_(v);
+  } else {
+    return v;
+  }
+}
+
+val_t update_fptr(val_t* v) {
+  while (check_fptr(*v)) {
+    *v = get_fptr(*v);
+  }
+  return *v;
+}
+
+val_t trace_fptr(val_t v) {
+  while (check_fptr(v)) {
+    v = get_fptr(v);
+  }
+  return v;
+}
+
 /* type utilities */
 uint_t typecode(val_t v) {
   uint_t t = tag(v);
@@ -19,7 +58,8 @@ uint_t typecode(val_t v) {
     break;
   case LOWTAG_OBJPTR:
   default:
-    tc = obj(v)->head.type;
+    v = trace_fptr(v);
+    return obj(v)->head.type;
   }
   return tc;
 }
@@ -28,7 +68,7 @@ type_t* type_of(val_t v) {
   return TYPES[typecode(v)];
 }
 
-const chr_t* typename(val_t v) {
+chr_t* typename(val_t v) {
 static chr_t* builtin_typenames[NUM_BUILTIN_TYPES] = {
   "nil-type", "cons", "none-type", "str",
   "type", "sym", "dict", "proc", "port",
@@ -84,13 +124,14 @@ int_t vm_size(val_t v) {
   case TYPECODE_DICT:
     return sizeof(dict_t);
   case TYPECODE_STR:
-    return strlen(tostr_(v)) + 1;
+    return strlen(tostr(v)) + 1;
   case TYPECODE_SYM:
-    return sizeof(sym_t) + strlen(tosym_(v)->name) + 1;
+    return sizeof(sym_t) + strlen(name(v));
   default:
     return type_of(v)->tp_sizeof(v);
   }
 }
+
 
 static inline int_t alloc_size(uint_t bytes) {
   // return the minimum allocation size, or the ceiling
@@ -121,7 +162,20 @@ static inline void clearobjhead(uchr_t* heap) {
 
 /* gc */
 
-void gc() {
+// allows functions that 
+inline void gc_if(uint_t b) {
+  if (heap_limit(alloc_size(b))) gc(NULL,0);
+  return;
+}
+
+// functions that allocate from the heap can use pre_gc to preemptively
+// run the gc, passing it a list of local bindings to update
+inline void pre_gc(uint_t b, val_t** locals, uint_t nlocals) {
+  if (heap_limit(alloc_size(b))) gc(locals, nlocals);
+}
+
+void gc(val_t** locals, uint_t nlocals) {
+  ALLOCATIONS = 0;
   if (GROWHEAP) {
     HEAPSIZE *= 2;
     EXTRA = realloc(EXTRA, HEAPSIZE);
@@ -131,12 +185,45 @@ void gc() {
   TOSPACE = EXTRA;
   FREE = TOSPACE;
 
-  gc_trace((val_t*)GLOBALS);
+  for (uint_t i = 0; i < TYPECOUNTER - 1; i++) {
+    type_t* tp = TYPES[i];
+    sym_t* tp_name = tp->tp_name;
+    val_t tmp_name = tagp(tp_name);
+
+    gc_trace(&tmp_name);
+    tp->tp_name = tosym_(tmp_name);
+    gc_trace(&(tp->tp_new));
+  }
+
+  gc_trace(&GLOBALS);
 
   for (int_t i = 0; i < SP; i++) {
     gc_trace(STACK + i);
   }
 
+  // trace all the registers that might have data in them
+  gc_trace(&EXP);
+  gc_trace(&VAL);
+  gc_trace(&NAME);
+  gc_trace(&ENV);
+  gc_trace(&UNEV);
+  gc_trace(&ARGL);
+  gc_trace(&PROC);
+  gc_trace(&ROOT_ENV);
+  gc_trace(&R_STDIN);
+  gc_trace(&R_STDOUT);
+  gc_trace(&R_STDERR);
+  gc_trace(&R_PROMPT);
+  gc_trace(&WRX);
+  gc_trace(&WRY);
+  gc_trace(&WRZ);
+
+  if (locals != NULL) {
+    for (uint_t i = 0; i < nlocals; i++) {
+      gc_trace(locals[i]);
+    }
+  }
+  
   if (GROWHEAP) {
     HEAP = realloc(HEAP,HEAPSIZE);
   }
@@ -149,100 +236,95 @@ void gc() {
   return;
 }
 
-val_t gc_trace(val_t* v) {
-  val_t value = *v;
-
-  // variables to hold references to memory being traced.
-  uchr_t* newhead;
-  val_t tmpleft, tmpright, env, formals, body;
-  int_t tag;
-  cons_t* c;
-  dict_t* dict;
-  proc_t* proc;
-
-  switch (typecode(value)) {
-  case TYPECODE_INT:
-  case TYPECODE_NIL:
-  case TYPECODE_TYPE:
-  default:
-    return value;
-  case TYPECODE_PORT:
-    newhead = gc_copy(heapobj(value), vm_size(value));
-    tag = LOWTAG_OBJPTR;
-    break;
-    
-  case TYPECODE_CONS:
-    c = toc_(value);
-    car_(c) = gc_trace(&(c->car));
-    cdr_(c) = gc_trace(&(c->cdr));
-    newhead = gc_copy(heapobj(value), vm_size(value));
-    tag = tag(value) == LOWTAG_LISTPTR ? LOWTAG_LISTPTR : LOWTAG_CONSPTR;
-    break;
-
-  case TYPECODE_SYM:
-    newhead = gc_copy(heapobj(value), vm_size(value));
-    tag = LOWTAG_STROBJ;
-    break;
-
-  case TYPECODE_DICT:
-    dict = todict_(value);
-    tmpleft = tagptr(dict->left, LOWTAG_OBJPTR);
-    tmpright = tagptr(dict->right, LOWTAG_OBJPTR);
-    dict->key = gc_trace(&(dict->key));
-    dict->binding = gc_trace(&(dict->binding));
-    dict->left = todict_(gc_trace(&tmpleft));
-    dict->right = todict_(gc_trace(&tmpright));
-    newhead = gc_copy(heapobj(value), vm_size(value));
-    tag = LOWTAG_OBJPTR;
-    break;
- 
-  case TYPECODE_STR:
-    newhead = gc_copy(heapobj(value), vm_size(value));
-    tag = LOWTAG_STRPTR;
-    break;
-
-  case TYPECODE_PROC:
-    proc = toproc_(value);
-    env = proc->env;
-    formals = proc->formals;
-    body = proc->head.flags_1 == 0 ? tagptr(proc->body, LOWTAG_CONSPTR) : 0;
-
-    proc->env = gc_trace(&env);
-    proc->formals = gc_trace(&formals);
-
-    if (body) {
-      proc->body = gc_trace(&body);
-    }
-
-    newhead = gc_copy(heapobj(value), vm_size(value));
-    tag = LOWTAG_OBJPTR;
-    break;
-  }
-
-  value = tagptr(newhead,tag);
-  *v = value;
-  return value;
+static bool inheap(val_t* v, uchr_t* h) {
+  uchr_t* ho = (uchr_t*)v;
+  return ho >= h && ho >= (h + HEAPSIZE);
 }
 
+void gc_trace(val_t* v) {
+  if (inheap(v,TOSPACE)) {
+    return;
+  }
 
-uchr_t* gc_copy(uchr_t* from, int_t numbytes) {
+  val_t value = *v;
+  if (tag(value) == LOWTAG_DIRECT) {
+    return;
+  } else { // check if the data has already been moved
+    cons_t* tmpc = tocons_(v);
+    val_t fp = car_(tmpc);
+    if (fp == FPTR) {
+      *v = cdr_(tmpc);
+      return;
+    } else {
+      ALLOCATIONS++;
+      uint_t tmptag;
+      uchr_t* newhead;
+      switch (typecode(value)) {
+      case TYPECODE_TYPE: // types are handled separately since they don't move
+	return;
+      case TYPECODE_CONS:
+	tmptag = tag(value);
+	gc_trace(&car_(value));
+	gc_trace(&cdr_(value));
+	newhead = gc_copy(heapobj(value),16,tmptag);
+	break;
+ 
+      case TYPECODE_SYM:
+	tmptag = LOWTAG_STROBJ;
+	newhead = gc_copy(heapobj(value),sizeof(sym_t) + strlen(name_(value)),tmptag);
+	break;
+
+      case TYPECODE_DICT:
+	tmptag = LOWTAG_OBJPTR;
+	gc_trace(&key_(value));
+	gc_trace(&binding_(value));
+	gc_trace(&left_(value));
+	gc_trace(&right_(value));
+
+	newhead = gc_copy(heapobj(value), sizeof(dict_t),tmptag);
+	break;
+
+      case TYPECODE_PORT:
+	tmptag = LOWTAG_OBJPTR;
+	newhead = gc_copy(heapobj(value), sizeof(port_t),tmptag);
+	break;
+ 
+      case TYPECODE_STR:
+	tmptag = LOWTAG_STRPTR;
+	newhead = gc_copy(heapobj(value), strlen(tostr_(value)) + 1,tmptag);
+	break;
+
+      case TYPECODE_PROC:
+	tmptag = LOWTAG_OBJPTR;
+	gc_trace(&formals_(value));
+	gc_trace(&env_(value));
+	if (bodytype_(value) == BODYTYPE_EXPR) gc_trace(&body_(value));
+
+	newhead = gc_copy(heapobj(value), sizeof(proc_t),tmptag);
+	break;
+      }
+
+  *v = tagptr(newhead,tmptag);
+  return;
+      }
+    }
+  }
+
+
+uchr_t* gc_copy(uchr_t* from, int_t numbytes, int_t tag) {
   cons_t* ascons = (cons_t*)from;
   int_t aligned_size = alloc_size(numbytes);
 
-  if (ascons->car == FPTR) {
-    return cptr(ascons->cdr);
+  memcpy(from, FREE, numbytes);
+  // leave a special marker and the address of the moved object
+  ascons->car = FPTR;
+  ascons->cdr = tagptr(FREE,tag);
+  zfill(FREE + numbytes, FREE + aligned_size);
+  FREE += aligned_size;
 
-  } else {
-
-    memcpy(from, FREE, numbytes);
-    ascons->car = FPTR;
-    ascons->cdr = (uintptr_t)FREE;
-
-    zfill(FREE + numbytes, FREE + aligned_size);
-
-    return cptr(ascons->cdr);
+  return cptr(ascons->cdr);
   }
-}
+
 
 /* bounds and error checking */
 
@@ -264,12 +346,13 @@ bool type_overflow(uint_t numtypes) {
 
 uchr_t* vm_allocate(int_t numbytes) {
   uint_t aligned_size = alloc_size(numbytes);
-  if (heap_limit(numbytes)) gc();
+  if (heap_limit(numbytes)) gc(NULL,0);
 
   uchr_t* out = FREE;
   clearobjhead(out);
   zfill(out + numbytes, out + aligned_size);
   FREE += aligned_size;
+  ALLOCATIONS++;
 
   return out;
 }
@@ -309,13 +392,15 @@ inline bool islist(val_t v) {
 inline val_t tagc(cons_t* c) {
   if (c == NULL) {
     return NIL;
-  }
-  
-  if (islist(cdr_(c))) {
-    return tagptr(c, LOWTAG_LISTPTR);
+  } else {
+    if (isnil(cdr_(c))) {
+      return tagptr(c, LOWTAG_LISTPTR);
+    } else if (tag(cdr_(c)) == LOWTAG_LISTPTR) {
+      return tagptr(c, LOWTAG_LISTPTR);
   } else {
     return tagptr(c, LOWTAG_CONSPTR);
   }
+ }
 }
 
 inline val_t car(val_t v) {
@@ -324,7 +409,7 @@ inline val_t car(val_t v) {
 }
 
 inline val_t cdr(val_t v) {
-  cons_t* c = toc(v);
+  cons_t* c = tocons(v);
   return cdr_(c);
 }
 
@@ -334,8 +419,8 @@ inline val_t cxr(val_t c, cons_sel s) {
   val_t curr = c;
   
   if (s == -1) {
-    while (iscons(curr) && iscons(cdr_(curr))) {
-      curr = cdr_(curr);
+    while (iscons(curr) && iscons(cdr(curr))) {
+      curr = cdr(curr);
     }
 
     return curr;
@@ -360,52 +445,58 @@ inline val_t cxr(val_t c, cons_sel s) {
 inline val_t cons(val_t ca, val_t cd) {
   cons_t* obj = (cons_t*)vm_allocate(16);
 
-  obj->car = ca;
-  obj->cdr = cd;
+  // since vm_allocate might have moved ca and cd, update their values
+  car_(obj) = trace_fptr(ca);
+  cdr_(obj) = trace_fptr(cd);
 
   return tagc(obj);
 }
 
-inline int_t ncells(val_t c) {
-  if (c == NIL) {
-    return 0;
-  }
-
-  int_t count = 0;
-  
-  while (isc(c)) {
+inline uint_t ncells(val_t c) {
+  uint_t count = 0;
+  while (iscons(c)) {
     count++;
-    c = cdr_(c);
+    c = cdr(c);
   }
 
-  if (c == NIL) {
-    return count;
-  } else {
-    return count + 1;
-  }
+  return count + (isnil(c) ? 0 : 1);
 }
 
 val_t append(val_t* c, val_t v) {
-  if (c == NULL) escapef(NULLPTR_ERR,stderr,"Unexpected null pointer in append.");
-  else if (!islist(*c)) escapef(TYPE_ERR,stderr,"Attempt to append to non-list.");
+  if (c == NULL) escapef(NULLPTR_ERR,stderr,"Unexpected null pointer in append");
+  else if (!islist(*c)) escapef(TYPE_ERR,stderr,"Attempt to append to non-list");
 
-  while (iscons(*c)) c = &cdr_(*c);
+  val_t* localvs[2] = {c, &v };
+  pre_gc(sizeof(cons_t),localvs,2);
 
-  *c = cons(v,NIL);
+  val_t* cc = c;
+
+  // if allocation of a new cons triggered a garbage collection,
+  while (iscons(*cc)) cc = &cdr_(*cc);
+
+  *cc = cons(v, NIL);
   
   return *c;
 }
 
+val_t append_i(val_t* c, val_t v) {
+  if (c == NULL) escapef(NULLPTR_ERR, stderr, "Unexpected null pointer in append");
 
-val_t extend(val_t* cx, val_t cy) {
-  if (cx == NULL) escapef(NULLPTR_ERR,stderr,"Unexpected null pointer.");
-  if (!islist(*cx) || !islist(cy)) escapef(TYPE_ERR,stderr,"Unexpected null pointer.");
-
-  val_t* out = cx;
-
-  while (iscons(*cx)) cx = &cdr_(*cx);
+  if (v == NIL) {
+    return *c;
+  }
   
-  *cx = cy;
+  val_t* cc = c;
 
-  return *out;
+  while (iscons(*cc)) {
+    if (iscons(cdr_(*cc))) {
+      // correct the list pointer lowtag
+      cdr_(*cc) = untag(cdr_(*cc)) | LOWTAG_CONSPTR;
+    }
+    cc = &cdr_(*cc);
+  }
+
+  *cc = v;
+  *c = untag(*c) | LOWTAG_CONSPTR;
+  return *c;
 }

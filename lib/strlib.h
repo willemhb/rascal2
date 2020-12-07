@@ -6,6 +6,8 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <wctype.h>
+#include <stdio.h>
 
 typedef uint32_t hash_t;
 
@@ -19,5 +21,23 @@ int32_t get_aligned_size(char*);
 int32_t ceil_mod_eight(int32_t,int32_t);
 char* itoa(int32_t,int32_t);
 int32_t int_str_len(int64_t,int64_t);
+
+/* helpers for treating utf-8 strings as arrays of fixed-size characters */
+wint_t nth_wc(char* s, size_t n);
+int find_wc(wchar_t cp, char* s);
+int replace_nth_wc(char* old, char* new, size_t i, wchar_t cp, int max);
+size_t nchars(char*);
+int testuc(unsigned char);
+
+/* 
+
+   utf-8 low level io helpers 
+
+*/
+wint_t fgetuc(FILE*);
+int fputuc(wchar_t,FILE*);
+int fungetuc(wchar_t,FILE*);
+wint_t peekuc(FILE*);
+
 /* end strlib.h */
 #endif

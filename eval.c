@@ -4,18 +4,25 @@
 val_t new_proc(val_t formals, val_t env, val_t body, proc_fl callmode, proc_fl bodytype) {
   int_t argco;
   proc_fl vargs;
-  
+  val_t* locals[3];
+
   if (bodytype == BODYTYPE_CFNC) {
     argco = formals;
     vargs = VARGS_FALSE; // this flag should be explicitly altered during initialization
     formals = NIL;
+    locals[0] = &env;
+    pre_gc(sizeof(proc_t),locals,1);
 
   } else if (!isenvnames(formals)) {
     escapef(TYPE_ERR, stderr, "Malformed argument list.");
   } else {
     argco = ncells(formals);
     vargs = islist(formals) ? VARGS_FALSE : VARGS_TRUE;
-    fprintf(stdout, "%d\n", vargs);
+    locals[0] = &env;
+    locals[1] = &formals;
+    locals[2] = &body;
+
+    pre_gc(sizeof(proc_t),locals,3);
   }
 
   proc_t* obj = (proc_t*)vm_allocate(sizeof(proc_t));
@@ -75,21 +82,21 @@ inline val_t invoke(val_t (*behavior)(), int_t argco, val_t argl, bool vargs) {
 }
 
 /* stack interface */
-inline void push(val_t v) {
+inline val_t* push(val_t v) {
   if (stack_overflow(1)) {
     escapef(OVERFLOW_ERR,stderr,"stack overflow");
   }
 
   SP++;
   STACK[SP] = v;
-  return;
+  return STACK + SP;
 }
 
 inline val_t pop() {
   if (SP == -1) {
     escapef(OVERFLOW_ERR,stderr,"pop on empty stack");
   }
-
+  
   val_t out = STACK[SP];
   SP--;
   return out;
@@ -175,7 +182,7 @@ val_t eval_expr(val_t x,  val_t e) {
   /* save the current values of all registers */
   save(EXP);
   save(VAL);
-  save(CONTINUE);
+  savel(CONTINUE);
   save(NAME);
   save(ENV);
   save(UNEV);
@@ -197,7 +204,7 @@ val_t eval_expr(val_t x,  val_t e) {
   restore(UNEV);
   restore(ENV);
   restore(NAME);
-  restore(CONTINUE);
+  restorel(CONTINUE);
   restore(VAL);
   restore(EXP);
 
@@ -226,13 +233,13 @@ val_t eval_expr(val_t x,  val_t e) {
   exit(EXIT_FAILURE);
 
  ev_return:
-  restore(CONTINUE);
+  restorel(CONTINUE);
   restore(ENV);
 
   jump(CONTINUE);
 
  ev_macro_return:
-  restore(CONTINUE);
+  restorel(CONTINUE);
   restore(ENV);
   EXP = VAL;
 
@@ -244,7 +251,7 @@ val_t eval_expr(val_t x,  val_t e) {
 
  ev_variable:
   VAL = vm_gete(EXP,ENV);
-  failf(VAL == NONE, UNBOUND_ERR, "Unbound symbol error.");
+  failf(VAL == NONE, UNBOUND_ERR, "Unbound symbol error for symbol %s.",name_(EXP));
 
   jump(CONTINUE);
 
@@ -254,7 +261,7 @@ val_t eval_expr(val_t x,  val_t e) {
   jump(CONTINUE);
 
  ev_setv:
-  save(CONTINUE);
+  savel(CONTINUE);
   CONTINUE = EV_SETV_ASSIGN;
   UNEV = cxr(EXP,ADD);
   save(UNEV);
@@ -268,7 +275,7 @@ val_t eval_expr(val_t x,  val_t e) {
   NAME = VAL;
   restore(UNEV);
   EXP = UNEV;
-  restore(CONTINUE);
+  restorel(CONTINUE);
 
   jump(EV_ASSIGN);
 
@@ -276,14 +283,14 @@ val_t eval_expr(val_t x,  val_t e) {
   vm_pute(NAME,ENV);
   save(NAME);
   save(ENV);
-  save(CONTINUE);
+  savel(CONTINUE);
 
   CONTINUE = EV_ASSIGN_END;
 
   dispatch(EXP);
 
  ev_assign_end:
-  restore(CONTINUE);
+  restorel(CONTINUE);
   restore(ENV);
   restore(NAME);
 
@@ -306,7 +313,7 @@ val_t eval_expr(val_t x,  val_t e) {
   jump(CONTINUE);
 
  ev_apply:
-  save(CONTINUE);
+  savel(CONTINUE);
   CONTINUE = EV_APPLY_OP_DONE;
 
   UNEV =  cdr_(EXP); // list of applied arguments
@@ -317,7 +324,7 @@ val_t eval_expr(val_t x,  val_t e) {
 
  ev_apply_op_done:
   restore(UNEV);
-  restore(CONTINUE);
+  restorel(CONTINUE);
   PROC = istype(VAL) ? totype_(VAL)->tp_new : VAL;
   failf(!isproc(PROC),APPLICATION_ERR,"Attempt to apply non-function with type %s", typename(PROC));
 
@@ -326,7 +333,7 @@ val_t eval_expr(val_t x,  val_t e) {
 
   ARGL = NIL;
   save(PROC);
-  save(CONTINUE);
+  savel(CONTINUE);
   
   CONTINUE = EV_APPLY_ACCUMARG;
   
@@ -354,7 +361,7 @@ val_t eval_expr(val_t x,  val_t e) {
   goto ev_apply_argloop;
 
  ev_apply_dispatch:
-  restore(CONTINUE);  // saved at apply_op_done
+  restorel(CONTINUE);  // saved at apply_op_done
   restore(PROC);      // saved at apply_op_done
 
   branch(bodytype_(PROC) == BODYTYPE_CFNC, EV_APPLY_BUILTIN);
@@ -362,7 +369,7 @@ val_t eval_expr(val_t x,  val_t e) {
   failf(!check_argco(argco_(PROC),ARGL,vargs_(PROC)), ARITY_ERR, "expected %d, got %d.",argco_(PROC),ncells(ARGL));
 
   save(ENV);          // save for after procedure application
-  save(CONTINUE);     // restore after procedure application
+  savel(CONTINUE);     // restore after procedure application
 
   UNEV = body_(PROC);
   ENV = new_env(formals_(PROC), ARGL, env_(PROC));
@@ -377,10 +384,10 @@ val_t eval_expr(val_t x,  val_t e) {
  ev_apply_macro:
   ARGL = UNEV;
 
-  failf(!check_argco(argco_(PROC),ARGL,vargs_(PROC)), ARITY_ERR, "Incorrect arity.");
+  failf(!check_argco(argco_(PROC),ARGL,vargs_(PROC)), ARITY_ERR, "Expected %d, got %d",argco_(PROC), ncells(ARGL));
 
   save(ENV);
-  save(CONTINUE);
+  savel(CONTINUE);
   
   UNEV = body_(PROC);
   ENV = new_env(formals_(PROC),ARGL,env_(PROC));
@@ -390,18 +397,18 @@ val_t eval_expr(val_t x,  val_t e) {
   
  ev_sequence_start: // assumes that unev is a list of 
   VAL = NIL;
-  save(CONTINUE);
+  savel(CONTINUE);
   save(UNEV);
 
   goto ev_sequence_loop;
 
  ev_sequence_loop:
   restore(UNEV);
-  restore(CONTINUE);
+  restorel(CONTINUE);
 
   branch(UNEV == NIL, CONTINUE);
 
-  save(CONTINUE);
+  savel(CONTINUE);
 
   EXP = car_(UNEV);
   UNEV = cdr_(UNEV);
@@ -412,7 +419,7 @@ val_t eval_expr(val_t x,  val_t e) {
   dispatch(EXP);
 
  ev_if:
-  save(CONTINUE);
+  savel(CONTINUE);
   CONTINUE = EV_IF_TEST;
   
   UNEV = cxr(EXP,DD);
@@ -432,7 +439,7 @@ val_t eval_expr(val_t x,  val_t e) {
 
  ev_let:
   save(ENV);                     
-  save(CONTINUE);
+  savel(CONTINUE);
   CONTINUE = EV_LET_ARGLOOP;
   
   ENV = new_env(NIL,NIL,ENV);      // set up new frame
@@ -466,7 +473,7 @@ val_t eval_expr(val_t x,  val_t e) {
 
  ev_if_test:
   restore(UNEV);
-  restore(CONTINUE);
+  restorel(CONTINUE);
 
   branch(!rbooltocbool(VAL), EV_IF_ALTERNATIVE);
   
@@ -483,7 +490,7 @@ val_t eval_expr(val_t x,  val_t e) {
   dispatch(EXP);
 
   ev_if_next:
-    save(CONTINUE);
+    savel(CONTINUE);
     save(UNEV);
 
     CONTINUE = EV_IF_TEST;

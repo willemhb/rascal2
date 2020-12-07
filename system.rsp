@@ -1,21 +1,135 @@
 ;; core builtins for rascal
 
-;; list function
+;; core list function
+
 (setv 'list (fn args args))
+
+(setv 'cons? (fn (x) (isa? x cons)))
+
+(setv 'list? (fn (x) (if (nil? x) t
+                         (cons? x) (list? (cdr x))
+			 nil)))
+
+
+(setv 'append (fn (xs ys) (if (nil? xs) ys (cons (car xs) (append (cdr xs) ys)))))
+
+
+(setv 'list* (fn args
+      	     	 (let
+		     (loop (fn (argl)
+      	  		       (if (nil? argl)       nil
+	      		      	   (nil? (cdr argl)) (car argl)
+	      			   (append (list (car argl)) (loop (cdr argl))))))
+		   (loop args))))
 
 (setv 'setq (macro (n b) (list setv (list quote n) b)))
 
-(setq def setq)
+(setq not (fn (x) (if (nil? x) t nil)))
 
-(setq defun
-      (macro (name args . body)
-	     (list 'def name (cons 'fn (cons args body)))))
+(setv 'def setq)
 
-(setq defmac
-      (macro (name args . body)
-	     (list 'def name (cons 'macro (cons args body)))))
+(def defun (macro (name formals . body)  (list 'def name (list* 'fn formals body))))
+(def defmac (macro (name formals . body) (list 'def name (list* 'fn formals body))))
 
-(defun append (xs ys)
-  (if
-      (nil? xs) ys
-      (cons (car xs) (append (cdr xs) ys))))
+(defmac and tests
+        (if (nil? tests) (cons 't nil)
+          (list 'if (car tests) (and (cdr tests)) 'nil)))
+
+(defmac or tests
+  (if (nil? tests) (cons 'nil nil)
+      (list 'if (car tests) 't (or (cdr tests)))))
+
+;; attempt at quasiquoting below
+(defmac backq (e)
+  (if (nil? e)        'nil
+      (not (cons? e)) expression
+      (eq? (car e) 'unq) ))
+
+;; basic higher order functions
+
+(defun map (p . args)
+  ;; simple map is used as both a helper for mapping rest args and
+  ;; to handle the simple case of mapping a function over a single list
+  (let (simple-map (fn (f xs)
+			(if (nil? xs) nil
+			    (cons (f (car xs)) (simple-map f (cdr xs)))))
+
+	loop       (fn (argl)
+		       (if (nil? argl) nil
+			 (cons (apply p (simple-map )) (loop (cdr argl))))))
+    (if (nil? args)       nil
+        (nil? (cdr args)) (simple-map p args)
+        (loop p args))))
+
+
+(defun filter (p? coll)
+  ;; filter!
+  (if (nil? coll)     nil
+      (p? (car coll)) (cons (car coll) (filter p? (cdr coll)))
+      (filter p? (cdr coll))))
+
+
+(defun compose (f g)
+  (fn args (f (apply g args))))
+
+;; probably a more general definition of this is possible
+(defun curry (f y)
+  (fn (x) (f x y)))
+
+;; wrap a callable to prevent its evaluation
+(defmac thnk (f) (list 'fn 'nil (list f)))
+
+;; type predicates
+
+(defun int? (x) (isa? x int))
+(defun sym? (x) (isa? x sym))
+(defun dict? (x) (isa? x dict))
+(defun str? (x) (isa? x str))
+(defun type? (x) (isa? x type))
+(defun port? (x) (isa? x port))
+(defun ucp?  (x) (isa? x ucp))
+
+;; basic numeric functions
+
+(defun zero? (x) (= 0 x))
+(defun one? (x)  (= 1 x))
+(defun pos? (x) (> x 0))
+(defun neg? (x) (< x 0))
+(defun inc (n) (+ n 1))
+(defun dec (n) (- n 1))
+(defun even? (n) (= 0 (rem n 2)))
+(defun odd? (n)  (= 1 (rem n 2)))
+(defun sqr (n) (* n n))
+(defun sum args (apply + args))
+
+(defun pow (n k)
+  ;; fast exponent
+  (if (zero? k) 1
+      (one? k)  n
+      (even? k) (pow (sqr n) (/ k 2))
+      (* n (pow n (dec k)))))
+
+;; probably better to cheat and use C's div once the C piece is cleaned up
+(defun divmod (n m)
+  (cons (/ n m) (rem n m)))
+
+(defun len (xs) (if
+		  (nil? xs) 0
+		  (inc (len (cdr xs)))))
+
+;; classics!
+(defun caar (x) (car (car x)))
+(defun cadr (x) (car (cdr x)))
+(defun cdar (x) (cdr (car x)))
+(defun cddr (x) (cdr (cdr x)))
+
+
+;; redefinition of car and cdr
+(def fst car)
+(def rst cdr)
+(def ffst caar)
+(def frst cadr)
+(def rfst cdar)
+(def rrst cddr)
+
+;; 

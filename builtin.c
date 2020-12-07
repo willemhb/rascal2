@@ -130,45 +130,20 @@ void _new_builtin_function(const chr_t* fname, int_t argc, bool vargs, const voi
 }
 
 void init_builtin_functions() {
+  // the only builtin functions supplied are accessors
+  // to essential interpreter variables
+  // other C functions are written or supplied, but for simplicity
+  // they're bootstrapped within Rascal by binding procedures to ccalls.
+  // 
   static chr_t* builtin_fnames[] = {
-    "+", "-", "*", "/", "rem",                  // arithmetic
-    "<", "=", "eq?", "nil?","none?",            // predicates and comparison
-    "cmp", "type", "isa?", "size", "cons",
-    "sym", "str", "int", "dict", "car",
-    "cdr", "rplca", "rplcd", "assr","assv",
-    "setr", "rplcv", "open", "close", "read",
-    "prn", "reads", "load", "eval", "apply",
+    "*env*","*globals*", "*root*", "*read-table*",
   };
 
-  static int_t builtin_argcos[] = {
-    2, 2, 2, 2, 2,
-    2, 2, 2, 1, 1,
-    2, 1, 2, 1, 2,
-    1, 1, 1, 1, 1,
-    1, 2, 2, 2, 2,
-    3, 3, 2, 1, 1,
-    2, 1, 1, 2, 2,
-  };
+  static int_t builtin_argcos[] = {};
 
-  static bool builtin_vargs[] = {
-    false, false, false, false, false,
-    false, false, false, false, false,
-    false, false, false, false, false,
-    false, false, false, true, false,
-    false, false, false, false, false,
-    false, false, false, false, false,
-    false, false, false, false, false,
-  };
+  static bool builtin_vargs[] = {};
 
-  static void* builtin_callables[] = {
-    r_add, r_sub, r_mul, r_div, r_rem,
-    r_lt, r_eqnum, r_eqp, r_nilp, r_nonep,
-    r_cmp, r_typeof, r_isa, r_size, r_cons,
-    r_sym, r_str, r_int, r_dict, r_car,
-    r_cdr, r_rplca, r_rplcd, r_assr, r_assv,
-    r_setr, r_rplcv, r_open, r_close, r_read,
-    r_prn, r_reads, r_load, r_eval, r_apply,
-};
+  static void* builtin_callables[] = {};
 
   for (int_t i = 0; i < NUM_BUILTINS; i++) {
     _new_builtin_function(builtin_fnames[i],builtin_argcos[i],builtin_vargs[i],builtin_callables[i]);
@@ -177,9 +152,21 @@ void init_builtin_functions() {
 }
 
 void init_forms() {  
-  static chr_t* builtin_forms[] = {"setv", "quote", "let",
-                                         "do", "fn", "macro", "if" };
-
+  static chr_t* builtin_forms[] = {
+    "setv", "quote", "let",
+    "do", "if", "ccall",                // ccall example (ccall fputs stdout "a string.")
+    "lambda", };                        // the first argument to ccall should evaluate to
+                                        // an integer that's used to look up the specified
+                                        // method. lambda is a generalization of 'fun' and
+                                        // 'macro' that takes an explicit argument to indicate
+                                        // how to call it and calls the proc constructor.
+                                        // hopefully implementing ccall should allow me to
+                                        // to minimize the amount of C library code I'm writing
+                                        // just to get the language working
+                                        // example usage of lambda:
+                                        // (lambda :function (x y z) (+ x y z))
+                                        // (setv 'macro (lambda :macro ...))
+  
   for (int_t i = EV_SETV; i < NUM_FORMS; i++) {
     val_t new_form = _new_self_evaluating(builtin_forms[i]);
     BUILTIN_FORMS[i] = new_form;
@@ -417,7 +404,7 @@ type_t* inttype = (type_t*)malloc(sizeof(type_t));
   inttype->tp_cmp = cmp_int;
   inttype->tp_new = NIL;
   inttype->tp_sizeof = NULL;
-  inttype->tp_prn = prn_int;
+  inttype->tp_prn = NULL;
 
   for (int_t i = 0; i < NUM_BUILTIN_TYPES; i++) {
     sym_t* tpname = intern_builtin(builtin_typenames[i],tagp(TYPES[i]));
@@ -428,6 +415,8 @@ type_t* inttype = (type_t*)malloc(sizeof(type_t));
 }
 
 void bootstrap_rascal() {
+  // set the locale to UTF-8
+  setlocale(LC_ALL,"en_US.UTF-8");
   fprintf(stdout, "Initialization begining.\n");
   init_log();
   fprintf(stdout, "Log initialized.\n");

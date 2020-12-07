@@ -1,6 +1,21 @@
 #include "rascal.h"
 
 
+
+/* 
+   the core string type
+
+   
+*/
+
+
+str_t* vm_str(chr_t* s) {
+  str_t* out = (str_t*)vm_allocate(strlen(s) + 1);
+  strcpy(out,s);
+  return out;
+}
+
+
 inline val_t hash(val_t v) {
   sym_t* s = tosym(v);
   return hash_(s);
@@ -11,6 +26,7 @@ inline chr_t* name(val_t v) {
 
   return name_(s);
 }
+
 
 /* simple comparison helpers */
 inline int_t cmpi(int_t x, int_t y){
@@ -65,129 +81,156 @@ inline int_t cmp_str(val_t x, val_t y) {
 }
 
 inline int_t cmp_sym(val_t x, val_t y) {
-  return cmphs(name_(x),hash_(x),name_(y),hash_(y));
+  return cmphs(name(x),hash(x),name(y),hash(y));
 }
 
 inline int_t cmp_type(val_t x, val_t y) {
   return cmpui(typecode_self_(x),typecode_self_(y));
 }
 
-static dict_t* intern_string(const chr_t*, dict_t**);
+
+/* dict safe accessors */
+val_t key(val_t d) {
+  dict_t* dd = todict(d);
+  return key_(dd);
+}
+
+val_t binding(val_t d) {
+  dict_t* dd = todict(d);
+  return binding_(dd);
+}
+
+int_t keytype(val_t d) {
+  dict_t* dd = todict(d);
+  return keytype_(dd);
+}
+
+static val_t* intern_string(chr_t*, val_t*);
 
 
 val_t sym(chr_t* s) {
-  dict_t* loc = intern_string(s,&GLOBALS);
-  sym_t* out = tosym_(key_(loc));
-  return tagp(out);
+  val_t* loc = intern_string(s,&GLOBALS);
+  return key_(*loc);
 }
 
-sym_t* intern_builtin(const chr_t* s, val_t b) {
-  dict_t* cell = intern_string(s,&GLOBALS);
-  
-  if (istype(binding_(cell))) { // types are initialized before builtins, so we need to 
-    totype_(binding_(cell))->tp_new = b; // make sure not to overwrite the type with its
+sym_t* intern_builtin(chr_t* s, val_t b) {
+  val_t* cell = intern_string(s,&GLOBALS);
+
+  val_t cb = binding(*cell);
+  if (istype(cb)) {                     // types are initialized before builtins, we must 
+    totype(cb)->tp_new = b;               // make sure not to overwrite the type with its
   } else {                               // constructor
-    binding_(cell) = b;
+    binding_(*cell) = b;
   }
-  sym_t* g_name = tosym_(key_(cell));
+  sym_t* g_name = tosym_(key(*cell));
   fl_const_(g_name) = CONSTANT;
   return g_name;
 }
 
-static dict_t* intern_string(const chr_t* s, dict_t** d) {
-  dict_t** curr = d;
-  hash_t h = hash_string(s);
 
-  while (*curr) {
-    sym_t* currk = tosym((*curr)->key);
+static val_t* intern_string(chr_t* s, val_t* d) {
+  // the string may or may not live in the lisp heap, so we need to save it in a local buffer
+  chr_t bs[256];
+  strncpy(bs,s,256);
+
+  // trigger the GC ahead of time, ensuring that the value of d is updated
+  val_t* locals[1] = { d };
+  pre_gc(sizeof(dict_t) + sizeof(sym_t) + strlen(s), locals, 1);
+
+  hash_t h = hash_string(bs);
+
+  while (*d) {
+    sym_t* currk = tosym(key_(*d));
     int_t compare = cmphs(s,h,name_(currk),hash_(currk));
 
-    if (compare < 0) curr = &(left_(*curr));
-    else if (compare > 0) curr = &(right_(*curr));
+    if (compare < 0) d = &(left_(*d));
+    else if (compare > 0) d = &(right_(*d));
     else break;
   }
 
-  if (*curr == NULL) {
-    *curr = dict();
-    sym_t* new_sym = (sym_t*)vm_allocate(sizeof(sym_t)+strlen(s));
-    keytype_(*curr) = SYMBOL_KEYS;
+  if (*d == NIL) {
+    // perform both allocations at once
+    uchr_t* memloc = vm_allocate(sizeof(dict_t)+sizeof(sym_t)+strlen(bs));
+    dict_t* new_dict = (dict_t*)memloc;
+    keytype_(new_dict) = SYMBOL_KEYS;
+    type_(new_dict) = TYPECODE_DICT;
+    left_(new_dict) = right_(new_dict) = NIL;
+    binding_(new_dict) = NONE;
+
+    sym_t* new_sym = (sym_t*)(memloc + sizeof(dict_t));
     type_(new_sym) = TYPECODE_SYM;
     hash_(new_sym) = h;
-    strcpy(name_(new_sym),s);
-    key_(*curr) = tagp(new_sym);
+    strcpy(name_(new_sym),bs);
+    
   }
 
-  return *curr;
+  return d;
 }
 
-dict_t** dict_searchk(val_t k, dict_t** d) {
-  if (keytype_(*d) == SYMBOL_KEYS && !issym(k)) {
+val_t* dict_searchk(val_t k, val_t* d) {
+  if (keytype(*d) == SYMBOL_KEYS && !issym(k)) {
     escapef(TYPE_ERR,stderr,"Wrong type %s for symbol table",typename(k));
   }
-
-  dict_t** curr = d;
-
-  while (*curr) {
-    val_t currk = key_(*curr);
+  
+  while (*d) {
+    val_t currk = key(*d);
     int_t order = cmpv(k, currk);
 
     if (order < 0) {
-      curr = &((*curr)->left);
+      d = &(left_(*d));
       
     }
     else if (order > 0) {
-      curr = &((*curr)->right);
+      d = &(left_(*d));
     } else {
       break;
     }
     }
 
-  return curr;
+  return d;
 }
 
-dict_t* dict_setk(val_t k, val_t v, dict_t* d) {
-  if (d == NULL) {
-    d = dict();
-    key_(d) = k;
-    binding_(d) = v;
-    return d;
-  }
+val_t dict_setk(val_t k, val_t v, val_t* d) {
+  val_t* locals[3] = {&k, &v, d};
 
+  pre_gc(sizeof(dict_t),locals,3);
+  
   if (issym(k) && fl_const_(k) == CONSTANT) {
     escapef(TYPE_ERR,stderr,"Tried to reset global constant");
   }
 
-  uint_t kt = keytype_(d);
+  int_t ktp = isnil(*d) ? GENERAL_KEYS : keytype(*d);
+  val_t* node = dict_searchk(k, d);
 
-  dict_t** node = dict_searchk(k, &d);
-
-  if (*node == NULL) {
-    *node = dict();
-    keytype_(*node) = kt;
-    key_(*node) = k;
+  if (*node == NIL) {
+    dict_t* dd = dict();
+    keytype_(dd) = ktp;
+    key_(dd) = k;
+    *node = tagp(dd);
   }
+
   binding_(*node) = v;
   
-  return d;
+  return v;
 }
 
-dict_t* dict_searchv(val_t v, dict_t* d) {
-  if (d == NULL) {
+val_t* dict_searchv(val_t v, val_t* d) {
+  if (*d == NIL) {
 
     return d;
 
-  } else if (keytype_(d) == SYMBOL_KEYS && !issym(v)) {
+  } else if (keytype(*d) == SYMBOL_KEYS && !issym(v)) {
 
     escapef(TYPE_ERR,stderr,"Bad type for symbol table %s",typename(v));
     
-  } else if (v == binding_(d)) {
+  } else if (v == binding_(*d)) {
     return d;
   } else {
-    dict_t* search_left = dict_searchv(v,left_(d));
+    val_t* search_left = dict_searchv(v,&left_(*d));
     if (search_left != NULL) {
       return search_left;
     } else {
-      return dict_searchv(v,right_(d));
+      return dict_searchv(v,&right_(*d));
     }
   }
 }
@@ -197,7 +240,7 @@ dict_t* dict() {
   type_(out) = TYPECODE_DICT;     
   key_(out) = NONE;                     
   binding_(out) = NONE;                  
-  left_(out) = right_(out) = NULL;
+  left_(out) = right_(out) = NIL;
   
   return out;
 }
@@ -206,17 +249,24 @@ val_t r_dict(val_t args) {
   if (!iscons(args)) {
     escapef(TYPE_ERR, stderr, "Malformed arguments list");
   }
-  dict_t* out = NULL;
-  while (iscons(args)) {
-    val_t k = car_(args);
-    args = cdr_(args);
-    val_t v = isnil(args) ? NIL : car_(args);
-    args = cdr_(args);
-    out = dict_setk(k,v,out);
+
+  uint_t n_args = ncells(args);
+  
+  if (n_args % 2) {
+    escapef(ARITY_ERR,stderr,"Bad parity %d for argument list",n_args);
   }
 
-  if (out == NULL) {
-    escapef(TYPE_ERR, stderr, "Cannot create a dictionary with no keys.");
+  uint_t n_nodes = n_args / 2;
+  val_t* locals[1] = { &args };
+  pre_gc(sizeof(dict_t) * n_nodes,locals,1);
+
+  val_t out = NIL;
+  while (iscons(args)) {
+    val_t k = car(args);
+    args = cdr(args);
+    val_t v = car(args);
+    args = cdr(args);
+    dict_setk(k,v,&out);
   }
 
   return tagp(out);
@@ -225,19 +275,18 @@ val_t r_dict(val_t args) {
 /* generic functions for object indexing and search */
 val_t r_assr(val_t k, val_t o) {
   if (isdict(o)) {
-    dict_t* d = todict_(o);
-    dict_t** r = dict_searchk(k, &d);
-    if (*r == NULL) {
+    val_t* r = dict_searchk(k, &o);
+    if (*r == NIL) {
       return NIL;
     } else {
-      return binding_(*r);
+      return binding(*r);
     }
   } else if (islist(o)) {
     int_t idx = toint(k);
 
     while (idx && iscons(o)) {
       idx--;
-      o = cdr_(o);
+      o = cdr(o);
     }
 
     return o;
@@ -249,23 +298,22 @@ val_t r_assr(val_t k, val_t o) {
 
 val_t r_assv(val_t v, val_t o) {
   if (isdict(o)) {
-    dict_t* d = todict_(o);
-    dict_t* r = dict_searchv(v, d);
+    val_t* r = dict_searchv(v, &o);
 
     if (r == NULL) {
       return NIL;
     } else {
-      return binding_(r);
+      return binding(*r);
     }
 
   } else if (islist(o)) {
     int_t count = 0;
     while (iscons(o)) {
-      if (v == car_(o)) {
+      if (v == car(o)) {
 	return tagv(count);
       }
       count++;
-      o = cdr_(o);
+      o = cdr(o);
     }
     return isnil(o) ? NIL : tagv(count);
     
@@ -276,8 +324,7 @@ val_t r_assv(val_t v, val_t o) {
 
 val_t r_setr(val_t r, val_t v, val_t o) {
   if (isdict(o)) {
-    dict_t* d = todict_(o);
-    return tagp(dict_setk(r,v,d));
+    return dict_setk(r,v,&o);
 
   } else if (islist(o)) {
     int_t i = toint(r);
@@ -285,7 +332,7 @@ val_t r_setr(val_t r, val_t v, val_t o) {
  
     while (i && iscons(c)) {
       i--;
-      c = cdr_(c);
+      c = cdr(c);
     }
 
     if (i) {
@@ -305,11 +352,11 @@ val_t r_rplcv(val_t v, val_t n, val_t o) {
     val_t c = o;
  
     while (iscons(c)) {
-      if (car_(c) == v) {
+      if (car(c) == v) {
 	car_(c) = n;
 	return o;
       } else {
-	c = cdr_(c);
+	c = cdr(c);
       }
     }
 
@@ -341,38 +388,33 @@ val_t vm_asse(val_t v, val_t e) {
     return NONE;
   }
   
+  val_t* result = &NIL;
   val_t locals = car(e);
 
   if (isdict(locals)) {
-      dict_t* local_d = todict_(locals);
-      dict_t** result = dict_searchk(v, &local_d);
+    result = dict_searchk(v, &locals);
 
-      if (*result == NULL) {
-	return vm_asse(v, cdr_(e));
-      } else {
-	return tagp(*result);
-      }
   } else if (iscons(locals)) {
-      val_t ln = car_(locals);
-      val_t lb = cdr_(locals);
+      val_t ln = car(locals);
+      val_t lb = cdr(locals);
 
       while (iscons(ln)) {
-	if (car_(ln) == v) {
-	  return lb;
+	if (car(ln) == v) {
+	  result = &lb;
+	  break;
 	}
 
-	ln = cdr_(ln);
-	lb = cdr_(lb);
+	ln = cdr(ln);
+	lb = cdr(lb);
       }
 
-      if (issym(ln) && ln == v) {
-	return cons(lb,NIL);
-      } else {
-	return vm_asse(v,cdr_(e));
-      }
-    } else {
-      escapef(TYPE_ERR,stderr,"Incorrect type for locals.");
+      if (issym(ln)) result = ln == v ? &lb : &NIL;
+
+  } else {
+    escapef(TYPE_ERR,stderr,"Incorrect type for locals.");
   }
+
+  return *result == NIL ? vm_asse(v,cdr(e)) : *result;
 }
 
 val_t vm_gete(val_t v, val_t e) {
@@ -382,10 +424,10 @@ val_t vm_gete(val_t v, val_t e) {
   */
   val_t loc = vm_asse(v,e);
   if (isdict(loc)) {
-    return binding_(loc);
+    return binding(loc);
 
   } else if (iscons(loc)) {
-    return car_(loc);
+    return car(loc);
 
   } else {
     return NONE;
@@ -400,18 +442,18 @@ val_t vm_pute(val_t n, val_t e) {
     escapef(TYPE_ERR,stderr,"Attempt to rebind constant");
   }
 
-    val_t locals = car(e);
-    if (isdict(locals)) {
-      if (todict_(locals) == GLOBALS) {
-	return OK;
-      } else {
-	r_setr(n,NONE,locals);
-	return OK;
-      }
- 
-    } else if (iscons(locals)) {
-      car_(locals) = cons(n,car_(locals));
-      cdr_(locals) = cons(NIL,cdr_(locals));
+  val_t locals = car(e);
+
+  if (isdict(locals)) {
+    if (locals != GLOBALS) r_setr(n,NONE,locals);
+      return OK;
+      
+  } else if (iscons(locals)) {
+      val_t* localvs[1] = { &locals };
+      pre_gc(sizeof(cons_t) * 2, localvs, 1);
+
+      car_(locals) = cons(n,car(locals));
+      cdr_(locals) = cons(NONE,cdr(locals));
       return OK;
     } else {
       escapef(TYPE_ERR,stderr,"Incorrect environment type.");
@@ -423,10 +465,6 @@ val_t vm_sete(val_t n, val_t v, val_t e) {
   if (fl_const_(sn) == CONSTANT) {
     escapef(TYPE_ERR,stderr,"Attempt to rebind constant");
   }
-
-  if (e == NIL) {
-    escapef(UNBOUND_ERR,stderr,"Couldn't find name in globals");
-  } else {
     val_t loc = vm_asse(n,e);
 
     if (iscons(loc)) {
@@ -438,5 +476,4 @@ val_t vm_sete(val_t n, val_t v, val_t e) {
     } else {
       escapef(UNBOUND_ERR,stderr,"Couldn't find name in env");
     }
-  }
 }

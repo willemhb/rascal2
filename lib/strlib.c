@@ -116,3 +116,151 @@ char* itoa(int32_t i, int32_t b) {
 
   return out;
 }
+
+
+
+/* helpers for working with utf-8 strings */
+
+// get the nth unicode code from a multibyte character string
+// return -1 if the character string doesn't have n characters
+wint_t nth_wc(char* s, size_t n) {
+  wchar_t ch;
+  size_t nb = 0; // the current index in s, measured in bytes  
+
+  for (size_t i = 0; i < n; i++) {
+    if (s[nb] == '\0') return -1;
+
+    nb += mbtowc(&ch,s + nb, 4);
+  }
+
+  return ch;
+}
+
+int find_wc(wchar_t cp, char* s) {
+  size_t idx = 0;
+  wchar_t cpb;
+
+  while (*s != '\0') {
+    s += mbtowc(&cpb,s,4);
+    if (cpb == cp) {
+      return idx;
+    }
+
+    idx++;
+  }
+
+  return -1;
+}
+
+// replace the nth character in the multibyte string old with new,
+// writing the result to new
+int init_setcp_cpy(char* old, char* new, size_t i, wchar_t cp, int max) {
+  int total = 0;
+
+  for (size_t j = 0; j < i; j++) {
+    if (total >= max) break;
+    int nbytes = mblen(old,4);
+    memcpy(new,old,nbytes);
+    old += nbytes;
+    new += nbytes;
+    total += nbytes;
+  }
+
+  if (total + mblen(new,4) >= max || total + mblen(old,4) >= max) {
+    return -1;
+  }
+  
+  new += wctomb(new,cp);
+  old += mblen(old,4);
+  strncpy(old,new,max-total+mblen(old,4));
+  return 0;
+}
+
+size_t nchars(char* s) {
+  size_t count = 0;
+  while (*s != '\0') {
+    s += mblen(s,4);
+    count++;
+  }
+
+  return count;
+}
+
+// determine the length of a multibyte utf-8 sequence given the value of the first byte
+int testuc(unsigned char ch) {
+  if ((ch & 0x80) == 0) return 1;
+  else if ((ch & 0xE0) == 0xC0) return 2;
+  else if ((ch & 0xF0) == 0xE0) return 3;
+  else if ((ch & 0xF8) == 0xF0) return 4;
+  else return -1;
+}
+
+// fetch the next unicode code point from the given file stream
+wint_t fgetuc(FILE* f) {
+  wchar_t cpb;
+  char buffer[5] = { 0, 0, 0, 0, 0 };
+
+  if (feof(f)) {
+    return EOF;
+  }
+
+  buffer[0] = fgetc(f);
+  int nc = testuc(buffer[0]);
+
+  if (nc == -1) {
+    return -1;
+  }
+
+  for (int i = 1; i < nc; i++) {
+    if (feof(f)) return EOF;
+    buffer[i] = fgetc(f);
+  }
+
+  mbtowc(&cpb,buffer,4);
+
+  return cpb;
+}
+
+int fputuc(wchar_t ch, FILE* f) {
+  char buffer[5] = {0, 0, 0, 0, 0};
+  wctomb(buffer,ch);
+  return fputs(buffer,f);
+}
+
+int fungetuc(wchar_t ch, FILE* f) {
+  char buffer[5] = {0, 0, 0, 0, 0};
+  int nbytes = wctomb(buffer,ch);
+  long pos = ftell(f);
+
+  if (nbytes > pos) return -1;
+  else fseek(f,pos - nbytes,SEEK_SET);
+  return nbytes;
+}
+
+wint_t peekuc(FILE* f) {
+  wchar_t cpb;
+  char buffer[5] = { 0, 0, 0, 0, 0 };
+  long pos = ftell(f);
+
+  if (feof(f)) {
+    return EOF;
+  }
+
+  buffer[0] = fgetc(f);
+  int nb = testuc(buffer[0]);
+
+  if (nb == -1) {
+    return -1;
+  }
+
+  for (int i = 1; i < nb; i++) {
+    if (feof(f)) return EOF;
+    buffer[i] = fgetc(f);
+  }
+
+  mbtowc(&cpb,buffer,4);
+
+  fseek(f, pos, SEEK_SET);
+
+  return cpb;
+}

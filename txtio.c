@@ -2,77 +2,64 @@
 
 /* text and io types */
 
-/* basic string type */
-str_t* vm_str(chr_t* s) {
-  str_t* out = (str_t*)vm_allocate(strlen(s) + 1);
-  strcpy(out,s);
-  return out;
+/* port accessors */
+
+FILE* stream(val_t p) {
+  port_t* pp = toport(p);
+  if (isopen(pp)) return pp->stream;
+  else escapef(IO_ERR,stderr,"Tried to access a closed io stream.");
 }
 
+
 /* port interface */
+
+
+/* 
+   core IO functions 
+
+   open  -  open a file and create a port
+   close -  close a port's underlying file
+   read  -  read an S-expression from the file (reads to eof)
+   readc -  read the next UTF-8 character from the file
+   reads -  read the characters from the stream as a UTF-8 stream (creates a new string).
+   peekc -  check the next character in the stream
+   prn   -  write an S-expression to the stream
+   prnc  -  write a UTF-8 character to the file
+   prns  -  write the argument as a plain character string
+   load  -  read a file as rascal code and execute it
+
+   other IO functions
+   
+   eof?  - checks the end of file indicator
+
+*/
+
 val_t r_open(val_t fnm, val_t md) {
   str_t* fname = tostr(fnm);
   str_t* mode = tostr(md);
 
-  return tagp(vm_open(fname,mode));
+  return _vm_open(fname,mode);
 }
 
-val_t r_close(val_t p) {
-  port_t* p_ = toport(p);
-  int_t status = vm_close(p_);
-  if (status == EOF) {
-    escapef(IO_ERR,stderr,"EOF returned from fclose.");
-  } else {
-    return OK;
-  }
-}
-
-val_t r_prn(val_t v, val_t p) {
-  port_t* strm = toport(p);
-
-  vm_prn(v,strm);
-
-  return OK;
-}
-
-val_t r_read(val_t p) {
-  port_t* pp = toport(p);
-  val_t out = read_expr(pp);
-  return out;
-}
-
-val_t r_reads(val_t p) {
-  static chr_t buffer[512];
-  port_t* port = toport(p);
-  chr_t* out = fgets(buffer,512,port->stream);
-
-  if (out == NULL) escapef(IO_ERR,stdout,"Failed to read string from port.");
-  return tagp(vm_str(out));
-}
-
-val_t r_load(val_t fname) {
-  str_t* fnames = tostr(fname);
-  port_t* p = vm_open(fnames,"r");
-  return vm_load(p);
-}
-
-port_t* vm_open(str_t* fname, str_t* readmode) {
-  FILE* f = fopen(fname,readmode);
+// the functions below are used in bootstrapping to create important ports passing
+// strings directly
+val_t _vm_open(str_t* fname, str_t* mode) {
+    FILE* f = fopen(fname,mode);
 
   if (f == NULL) {
     escapef(IO_ERR,stderr,"Failed to open %s",fname);
   }
-  
-  port_t* obj = (port_t*)vm_allocate(24);
+
+  port_t* obj = (port_t*)vm_allocate(sizeof(port_t));
 
   type_(obj) = TYPECODE_PORT;
   stream_(obj) = f;
   fl_iotype_(obj) = TEXT_PORT;  // worry about binary later
 
-  if (streq(readmode,"r")) {
+  if (streq(mode,"r")) {
     fl_readable_(obj) = 1;
     fl_writable_(obj) = 0;
-  } else if (streq(readmode,"w")) {
+  } else if (streq(mode,"w")) {
     fl_readable_(obj) = 0;
     fl_writable_(obj) = 1;
   } else {
@@ -80,15 +67,11 @@ port_t* vm_open(str_t* fname, str_t* readmode) {
     fl_writable_(obj) = 1;
   }
 
-  for (int i = 0; i < 8; i++) {
-    buffer_(obj)[i] = '\0';
-  }
-
-  return obj;
+  return tagp(obj);
 }
 
-val_t _std_port(FILE* f) {
-  port_t* obj = (port_t*)vm_allocate(24);
+val_t _vm_std_port(FILE* f) {
+    port_t* obj = (port_t*)vm_allocate(24);
 
   type_(obj) = TYPECODE_PORT;
   stream_(obj) = f;
@@ -105,156 +88,203 @@ val_t _std_port(FILE* f) {
   return tagp(obj);
 }
 
-int_t vm_close(port_t* p) {
-  fl_writable_(p) = 0;
-  fl_readable_(p) = 0;
-  fflush(stream_(p));
-
-  return fclose(stream_(p));
-}
-
-void prn_int(val_t v,port_t* p) {
-  int_t i = toint(v);
-  fprintf(stream_(p),"%d",i);
-
-  return;
-}
-
-void prn_type(val_t t,port_t* p) {
-  vm_puts(p, "#type:");
-  vm_puts(p, totype(t)->tp_name->name);
-}
-
-void prn_str(val_t s, port_t* p) {
-  str_t* str = tostr_(s);
-  vm_putc(p, '"');
-  vm_puts(p, str);
-  vm_putc(p, '"');
-}
-
-void prn_cons(val_t c, port_t* p) {
-  vm_putc(p, '(');
-
-  if (!islist(c)) {
-    vm_prn(car_(c),p);
-    vm_puts(p, " . ");
-    vm_prn(cdr_(c), p);
-
+val_t r_close(val_t p) {
+  FILE* f = stream(p);
+  int_t status = fclose(f);
+  if (status == EOF) {
+    escapef(IO_ERR,stderr,"EOF returned from fclose.");
   } else {
-    int_t i;
-    for (i = 0; i < MAX_LIST_ELEMENTS; i++) {
-      if (isnil(c)) break;
-      vm_prn(car_(c), p);
-      c = cdr_(c);
-      if (isnil(c)) break; // no space between the closing paren and the last element
-      vm_putc(p, ' ');
-    }
-
-    if (i == MAX_LIST_ELEMENTS) {
-      vm_puts(p, "...");
-    }
-  }
-
-  vm_putc(p, ')');
-}
-
-static void prn_dict_help(dict_t* dd, port_t* p) {
-  if (dd == NULL) {
-    return;
-  } else {
-    vm_prn(key_(dd), p);
-    vm_puts(p, " => ");
-    vm_prn(binding_(dd), p);
-    vm_puts(p, " ");
-    prn_dict_help(dd->left, p);
-    prn_dict_help(dd->right, p);
-    return;
+    fl_writable_(p) = 0;
+    fl_readable_(p) = 0;
+    
+    return OK;
   }
 }
 
-void prn_dict(val_t d, port_t* p) {
-  dict_t* dd = todict_(d);
-  vm_puts(p, "#d(");
-  prn_dict_help(dd, p);
-  vm_puts(p, ")");
-  return;
-}
 
-
-void prn_proc(val_t pr,port_t* p) {
+val_t r_wrt(val_t v, val_t p) {
+  FILE* strm = stream(p);
+  chr_t buffer[5];
   chr_t* ptype;
-  proc_t* proc = toproc_(pr);
-  if (callmode_(proc) == CALLMODE_MACRO) ptype = "macro";
-  else if (bodytype_(proc) == BODYTYPE_CFNC) ptype = "builtin";
-  else ptype = "function";
-  vm_puts(p, "#proc:");
-  vm_puts(p, ptype);
-  return;
-}
 
-void prn_sym(val_t s, port_t* p) {
-  vm_puts(p,name_(s));
-}
-
-void vm_prn(val_t v, port_t* p) {
-  if (!isopen(p)) {
-    escapef(IO_ERR,stderr,"Printing to a closed port.");
-  }
-  
   switch(typecode(v)) {
   case TYPECODE_NIL:
-    vm_puts(p,"nil");
+    fputs("nil",strm);
     break;
+
   case TYPECODE_NONE:
-    vm_puts(p,"none");
+    fputs("none",strm);
     break;
+ 
   case TYPECODE_PORT:
-    vm_puts(p, "#port");
+    fputs("#port",strm);
     break;
+ 
+  case TYPECODE_SYM:
+    fputs(name(v),strm);
+    break;
+
+  case TYPECODE_STR:
+    fputc('"', strm);
+    fputs(tostr(v), strm);
+    fputc('"', strm);
+    break;
+ 
+  case TYPECODE_CONS:
+      fputc('(',strm);
+      int_t i;
+
+      for (i = 0; i < MAX_LIST_ELEMENTS; i++) {
+
+	if (isnil(v)) break;
+
+	r_wrt(car(v), p);
+	v = cdr(v);
+  
+	if (isnil(v)) { // no space between the closing paren and the last element.
+	  break;
+	} else if (!iscons(v)) { // catch dotted lists
+	  fputs(" . ",strm);
+	  r_wrt(v,p);
+	  break;
+	} else {
+	  fputc(' ',strm);
+	}
+      }
+
+      if (i == MAX_LIST_ELEMENTS) {
+	fputs("...",strm);
+      }
+
+      fputc(')',strm);
+      break;
+
+  case TYPECODE_DICT:
+    fputs("#d(",strm);
+    r_wrt(key_(v),p);
+    fputs(" => ",strm);
+    r_wrt(binding_(v),p);
+
+    if (left_(v) != NIL) {
+      r_wrt(left_(v),p);
+    }
+
+    if (right_(v) != NIL) {
+      r_wrt(right_(v),p);
+    }
+
+    fputs(")",strm);
+    break;
+ 
+  case TYPECODE_PROC:
+    if (callmode_(v) == CALLMODE_MACRO) ptype = "macro";
+    else if (bodytype_(v) == BODYTYPE_CFNC) ptype = "builtin";
+    else ptype = "function";
+    fputs("#proc:",strm);
+    fputs(ptype,strm);
+    break;
+ 
+  case TYPECODE_UCP:
+    wctomb(buffer,val(v));
+    fputc('\\',strm);
+    fputs(buffer,strm);
+    break;
+
+  case TYPECODE_INT:
+    fprintf(stream(p),"%d",toint(v));
+    break;
+
+  case TYPECODE_TYPE:
+    fputs("#type:",strm);
+    fputs(totype(v)->tp_name->name, strm);
+    break;
+
   default:
     type_of(v)->tp_prn(v,p);
     break;
   }
+
+  return OK;
 }
 
-/* low level port api (calls to the underlying C api) */
-chr_t vm_getc(port_t* p) {
-  chr_t out = fgetc(stream_(p));
+val_t r_prn(val_t v, val_t p) {
+  FILE* strm = stream(p);
+  chr_t buffer[5];
+
+  switch (typecode(v)) {
+  case TYPECODE_UCP:
+    wctomb(buffer,val(v));
+    fputs(buffer,strm);
+    break;
+
+  case TYPECODE_STR:
+    fputs(tostr(v),strm);
+    break;
+
+  default:
+    r_wrt(v,p);
+    break;
+  }
+
+  return OK;
+}
+
+val_t r_eof(val_t p) {
+  return feof(stream(p));
+}
+
+val_t r_read(val_t p) {
+  FILE* f = stream(p);
+  val_t out = read_expr(f);
   return out;
 }
 
-int_t vm_putc(port_t* p, chr_t c) {
-  int_t out = fputc(c,stream_(p));
-  if (out == EOF) {
-    escapef(IO_ERR,stderr,"EOF");
-  }
-  return out;
+val_t r_readc(val_t p) {
+  FILE* f = stream(p);
+  int_t ch = fgetuc(f);
+
+  return ch == EOF ? NIL : tagv(((ucp_t)ch));
 }
 
-int_t vm_peekc(port_t* p) {
- chr_t next = fgetc(stream_(p));
+val_t r_peekc(val_t p) {
+  FILE* f = stream(p);
+  int_t ch = peekuc(f);
 
-  if (next == EOF) {
-    return next;
-  } else {
-    ungetc(next, p->stream);
-    return (chr_t)next;
-  }
+  return ch == EOF ? NIL : tagv(((ucp_t)ch));
 }
 
-chr_t* vm_gets(port_t* p, int_t i) {
+val_t r_reads(val_t p) {
+  static chr_t buffer[512];
+  chr_t* out = fgets(buffer,512,stream(p));
+
+  if (out == NULL) escapef(IO_ERR,stdout,"Failed to read string from port.");
+  return tagp(vm_str(out));
+}
+
+val_t r_load(val_t fname) {
+  str_t* fns = tostr(fname);
+  FILE* f = fopen(fns,"r");
+
+  if (f == NULL) {
+    escapef(IO_ERR,stderr,"Couldn't open file %s", fns);
+  }
+
+  push(NIL);
+  val_t* module = &STACK[SP - 1];
+
+  while (true) {
+    val_t exp = read_expr(f);
+    if (feof(f)) break;     // avoid appending 'None'
+    append(module,exp);
+  }
   
-  uchr_t* buffer = vm_allocate(i + 1);
-  return fgets((chr_t*)buffer, i + 1, p->stream);
+  fclose(f);
+
+  val_t exprs = pop();
+  
+  return eval_expr(cons(sym("do"),exprs),ROOT_ENV);
 }
 
-int_t vm_puts(port_t* p, chr_t* s) {
-  return fputs(s, p->stream);
-}
-
-bool vm_eof(port_t* p) {
-  return feof(p->stream);
-}
 
 static void take() {
   // reset the token
@@ -264,45 +294,49 @@ static void take() {
 chr_t* toktype_name(r_tok_t toktype) {
   static chr_t* toktype_names[] = {
     "LPAR", "RPAR", "DOT", "QUOT",
-    "NUM", "STR", "SYM", "EOF",
-    "NONE", "STXERR",
+    "NUM", "STR", "SYM", "UCP",
+    "EOF", "NONE", "STXERR",
   };
 
   return toktype_names[toktype];
 }
 
 /* tokenizer */
-static void accumtok(chr_t c) {
-  if (TOKPTR == TOKBUFF_SIZE - 1) {
+static void accumtok(ucp_t c) {
+  static chr_t ucpb[5] = {0, 0, 0, 0, 0};
+  wctomb(ucpb,c);
+  if (TOKPTR + mblen(ucpb,4) >= (TOKPTR - 1)) {
     escapef(IO_ERR,stderr, "Token too long.\n");
   } else {
-    TOKBUFF[TOKPTR++] = c;
+    strncpy(TOKBUFF + TOKPTR,ucpb,mblen(ucpb,4));
+    TOKPTR += mblen(ucpb,4);
   }
 }
 
-r_tok_t get_token(port_t* p) {
+r_tok_t get_token(FILE* f) {
   if (TOKTYPE != TOK_NONE) {
     return TOKTYPE;
   }
 
   TOKPTR = 0;
-  chr_t ch;
-  while (vm_peekc(p) != EOF) {
-    ch = vm_getc(p);
+  ucp_t ch;
+  int_t c;
+  while ((c = peekuc(f)) != EOF) {
+    ch = fgetuc(f);
     if (isspace(ch)) {
       continue;
     } else if (ch == ';') {
-      while ((ch = vm_peekc(p)) != EOF && ch != '\n') {
-	vm_getc(p);
+      while ((c = fgetuc(f)) != EOF && c != '\n') {
 	continue;
       }
 
-      if (ch == EOF) return TOK_EOF;
+      if (c == EOF) return TOK_EOF;
+      else continue;
+    } else {
+      break; 
     }
-
-    break;
   }
-
+  ch = (ucp_t)c;
   if (ch == EOF) {
     TOKTYPE = TOK_EOF;
     return TOKTYPE;
@@ -316,8 +350,10 @@ r_tok_t get_token(port_t* p) {
     case '\'':
       TOKTYPE = TOK_QUOT;
       return TOKTYPE;
+    
     case '"':
-      while ((ch = vm_getc(p)) != EOF && (ch != '"' || TOKBUFF[TOKPTR] == '\\')) {
+      while ((c = fgetuc(f)) != EOF && (c != '"' || TOKBUFF[TOKPTR] == '\\')) {
+	ch = (ucp_t)c;
 	accumtok(ch);
       }
       if (ch == EOF) {
@@ -332,11 +368,23 @@ r_tok_t get_token(port_t* p) {
     case '.':
       TOKTYPE = TOK_DOT;
       return TOKTYPE;
+    case '\\':
+      c = fgetuc(f);
+      if (c == EOF) {
+	TOKTYPE = TOK_STXERR;
+	sprintf(STXERR,"Character literal at end of file.");
+      } else {
+	TOKTYPE = TOK_UCP;
+	ch = (ucp_t)c;
+	accumtok(ch);
+	accumtok('\0');
+      }
+      break;
     default:
-      accumtok(ch);
-      while ((ch = vm_peekc(p)) != EOF && ch != ')' && !isspace(ch)) {
-	  vm_getc(p);
-	  accumtok(ch);
+      accumtok((ucp_t)c);
+      while ((c = peekuc(f)) != EOF && c != ')' && !isspace(ch)) {
+	ch = fgetuc(f);
+	accumtok(ch);
 	}
 
       accumtok('\0');
@@ -352,16 +400,23 @@ r_tok_t get_token(port_t* p) {
 	    }
 	  }
 	}
-      return TOKTYPE;
+	break;
     }
+
+  return TOKTYPE;
 }
 
 
-val_t read_expr(port_t* p) {
-  r_tok_t t = get_token(p);
-  int_t numval;
+val_t read_expr(FILE* f) {
+  r_tok_t t = get_token(f);
+  int_t numval; ucp_t cval;
 
   switch (t) {
+  case TOK_UCP:
+    take();
+    mbtowc(&cval,TOKBUFF,4);
+    return tagv(cval);
+
   case TOK_NUM:
     numval = atoi(TOKBUFF);
     take();
@@ -377,12 +432,12 @@ val_t read_expr(port_t* p) {
 
   case TOK_LPAR:
     take();
-    return read_cons(p);
+    return read_cons(f);
 
   case TOK_QUOT:
     take();
     // transform 'x to (quote x)
-    return cons(sym("quote"), cons(read_expr(p),NIL));
+    return cons(sym("quote"), cons(read_expr(f),NIL));
 
   case TOK_DOT:
   case TOK_RPAR:
@@ -396,59 +451,27 @@ val_t read_expr(port_t* p) {
   }
 }
 
-val_t read_cons(port_t* p) {
-  val_t out = NIL, curr;
+val_t read_cons(FILE* f) {
+  push(NIL); // save the result on the stack to ensure it's garbage collected
+  val_t* out = &STACK[SP-1];
+  val_t x;                     
   r_tok_t t;
 
-  while ((t = get_token(p)) != TOK_RPAR && t != TOK_DOT && t != TOK_STXERR) {
-    curr = read_expr(p);
-    append(&out,curr);
+  while ((t = get_token(f)) != TOK_RPAR && t != TOK_DOT && t != TOK_STXERR) {  
+    x = read_expr(f);    
+    append(out,x);
   }
-  
+
   if (TOKTYPE == TOK_STXERR) escapef(SYNTAX_ERR,stderr,"%s",STXERR);
   if (TOKTYPE == TOK_DOT) {
-    val_t* tail = &out;
-    while (iscons(*tail)) tail = &cdr_(*tail);
+    
     take();  // clear the dot token
-    *tail = read_expr(p);
-    if (get_token(p) != TOK_RPAR) escapef(SYNTAX_ERR,stderr,"Malformed dotted list.");
-  }
+    x = read_expr(f);
+    append_i(out,x);
+    }
 
-  take(); // clear the right paren token
-  return out;
-}
+  if (get_token(f) != TOK_RPAR) escapef(SYNTAX_ERR,stderr,"bad dotted list.");
 
-
-/* core reader procedures */
-val_t vm_read(port_t* p) {
-  if (!(fl_readable_(p) || fl_writable_(p))) {
-    return NONE;
-  } else if (vm_eof(p)) {
-    return NONE;
-  } else {
-    return read_expr(p);
-  }
-}
-
-/* 
-   for simplicity, right now load just reads a file wrapped in a 'do' expression and 
-   evalutes it.
- 
-*/
-
-val_t vm_load(port_t* p) {
-  val_t out = NIL;
-
-  while (true) {
-    val_t exp = vm_read(p);
-    if (vm_eof(p)) break;     // avoid appending the 'None' returned when vm_read encounters EOF
-    append(&out, exp);        //this can be written be better
-  }
-
-  out = cons(sym("do"),out);
-
-  fputs("load successful, beginning eval of ", stdout);
-  r_prn(out, R_STDOUT);
-  fputs("\n",stdout);
-  return OK;
+  take(); // clear the right paren tokne
+  return pop(); // return the head of the list
 }
