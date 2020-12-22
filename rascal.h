@@ -682,6 +682,36 @@ enum {
   EV_HALT,
 };
 
+// opcodes, vm, & vm registers
+void fetch(uchr_t*);                 // get the next instruction and update the instruction pointer
+void decode(uchr_t*);                // interpret the current instruction, load any arguments, and update the instruction pointer
+void getargs(uchr_t*,uint_t,uint_t); // load any arguments to the current instruction into the appropriate registers
+void execute();                      // execute the current instruction
+
+uchr_t INSTR;     // the current instruction
+uchr_t ARGA[8];   // the first argument to the current instruction
+uchr_t ARGB[8];   // the second argument to the current instruction
+uchr_t ARGC[8];   // the third argument to the current instruction
+val_t RESULT;     // holds immediate results (usually to be pushed onto the stack)
+uchr_t* IP;       // the instruction pointer
+
+enum {
+  OP_HALT,   // signals the end of execution
+  OP_POP,    // remove an item from the stack and leave it in a register (takes one argument, the register to leave the result in)
+  OP_PEEK,   // load an item from the stack into a register without updating the stack pointer (takes two arguments, the offset from the top of the stack and the register to leave the result in)
+  OP_PUSHC,  // push a constant value onto the stack (takes one argument, the value to be pushed)
+  OP_PUSHRX, // push the value of a register onto the stack (takes one argument, an ID for the register)
+  OP_PUSHS,  // push a reference to a string constant onto the stack (interprets the next byte in the instruction sequence as the head of a string constant)
+  OP_LOADV,  // lookup the value of a variable (takes one argument, a variable reference)
+  OP_PUTV,   // extend the current environment with a new variable name (takes one argument, a reference to the variable name)
+  OP_STOREV, // store a value in the given environment location (takes two arguments, a variable reference and the value to assign it)
+  OP_CCALL,  // call a C function (takes three arguments, an ID for the C function, the number of arguments to expect on the stack, and a code for the expected return type)
+  OP_APPLY,  // apply the closure on top of the stack
+  OP_RETURN, // return from an application
+  OP_BRANCH, // conditional branch
+  OP_JUMP,   // unconditional branch
+};
+
 // a separate set of labels to jump to when ERRORCODE is nonzero
 enum {
   EVERR_TYPE=1,
