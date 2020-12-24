@@ -105,76 +105,103 @@ typedef enum otag_t {
   OBJTAG_TYPE       =0b111ul,  // A type object
 } otag_t;
 
-/* 
 
+/* 
    C specs for interpreting rascal values as C data.
 
+   C specs are arrays of unsigned characters that encode C type information. They're used to 
+   streamline the interface between C and rascal. Calling C functions is done by constructing
+   a C spec for the function
+
+   C specs are designed to represent common types compactly, with the ability to represent
+   any type in the C standard with some degree of compactness.
+
+   All C specs begin with a head byte, whose 3 most-significant bits indicate a type family.
+   
  */
 
-enum {
-  CSP_FL_UNSIGNED =0b00000,
-  CSP_FL_SIGNED   =0b10000,
-  CSP_FL_VOID     =0b00000,
-  CSP_FL_CHR      =0b00100,
-  CSP_FL_INT      =0b01000,
-  CSP_FL_FLOAT    =0b01100,
-  CSP_FL_8        =0b00000,
-  CSP_FL_16       =0b00001,
-  CSP_FL_32       =0b00010,
-  CSP_FL_64       =0b00011,
-};
+typedef enum cspec_head_t {
+  CSPEC_HEAD_VOID           =0b000,  // special type specs -- meaning is context dependent
+  CSPEC_HEAD_CHRVAL         =0b001,  // character types
+  CSPEC_HEAD_INTVAL         =0b010,  // integer types
+  CSPEC_HEAD_FLOATVAL       =0b011,  // floating point types
+  CSPEC_HEAD_STRUCT         =0b100,  // this spec begins (or ends) a description of a struct type
+  CSPEC_HEAD_LIBRARY        =0b101,  // description of special library types (FILE, jmp_buf, div_t, &c)
+  CSPEC_HEAD_PTR            =0b110,  // this spec begins a description of a pointer
+  CSPEC_HEAD_ARRAY          =0b111,  // this spec indicates a description of an array (can include size information)
+} cspec_head_t;
 
-typedef enum cspec_layout_t {
-  CSP_VOID        =CSP_FL_VOID,
-  CSP_UCH8        =CSP_FL_CHR,
-  CSP_CH8         =CSP_FL_SIGNED | CSP_FL_CHR,
-  CSP_UCH16       =CSP_UCH8 | CSP_FL_16,
-  CSP_CH16        =CSP_FL_SIGNED | CSP_UCH16,
-  CSP_UCH32       =CSP_FL_CHR | CSP_FL_32,
-  CSP_CH32        =CSP_FL_SIGNED | CSP_UCH32,
-  CSP_FILE        =CSP_FL_CHR | CSP_FL_64,
-  CSP_UINT8       =CSP_FL_INT,
-  CSP_INT8        =CSP_FL_SIGNED | CSP_UINT8,
-  CSP_UINT16      =CSP_UINT8 | CSP_FL_16,
-  CSP_INT16       =CSP_FL_SIGNED | CSP_UINT16,
-  CSP_UINT32      =CSP_FL_INT | CSP_FL_32,
-  CSP_INT32       =CSP_FL_SIGNED | CSP_UINT32,
-  CSP_UINT64      =CSP_FL_INT | CSP_FL_64,
-  CSP_INT64       =CSP_FL_SIGNED | CSP_UINT64,
-  CSP_FLOAT32     =CSP_FL_SIGNED | CSP_FL_FLOAT | CSP_FL_32,
-  CSP_FLOAT64     =CSP_FLOAT32 | CSP_FL_64,
-  CSP_IMAG32      =CSP_FL_SIGNED | CSP_FL_VOID | CSP_FL_32,
-  CSP_IMAG64      =CSP_IMAG32 | CSP_FL_64,
-} cspec_layout_t;
+typedef enum cspec_offset_t {
+  CSPEC_OFFSET_HEAD      =5,
+  CSPEC_OFFSET_SIGN      =3,
+  CSPEC_OFFSET_REAL      =3,
+  CSPEC_OFFSET_VALSIZE   =0,
+  CSPEC_OFFSET_FIELDTYPE =4,
+  CSPEC_OFFSET_PTRTYPE   =4,
+  CSPEC_OFFSET_PTRDEPTH  =0,
+  CSPEC_OFFSET_ARRAYLEN  =4,
+} cspec_offset_t;
 
-typedef enum cspec_stars_t {
-  CSP_VALUE =0b00,
-  CSP_ARRAY =0b01,
-  CSP_PTR   =0b01,
-  CSP_PPTR  =0b10,
-  CSP_PPPTR =0b11,
-} cspec_stars_t;
+typedef enum cspec_fl_t {
 
-typedef enum cspec_field_t {
-  CSP_DATA  =0b0,
-  CSP_FIELD =0b1,
-} cspec_field_t;
+  /* sign flags for characters and integers */
 
-typedef struct cspec_t {
-    uint16_t sign      : 2;      // none, positive, or negative
-    uint16_t bits      : 1;      // normal (false) or bitfield (true)
-    uint16_t size      : 3;      // 8, 16, 32, 64, 128, or 256
-    uint16_t layout    : 3;      // void, char, int, float, imag, fileptr, or funcptr
-  uint16_t composition : 2;      // direct data, string member, array member, or struct member
-    uint16_t pdepth    : 2;      // 0, 1, 2, or 3
-    uint16_t fdepth    : 2;      // 0, 1, 2, or 3
-    uint16_t final     : 1;      // Indicates whether this is the last entry in the spec
-} cspec_t;
+  CSPEC_FL_SIGNED         =0b01,
+  CSPEC_FL_UNSIGNED       =0b10,
+  CSPEC_FL_NOSIGN         =0b11,
+
+  /* imaginary/complex qualifiers for floats */
+
+  CSPEC_FL_REAL           =0b01,
+  CSPEC_FL_IMAG           =0b10,
+  CSPEC_FL_CMPLX          =0b11,
+
+  /* field types for structs (bit fields or normal fields)*/
+
+  CSPEC_FL_FIELDS         =0b0, 
+  CSPEC_FL_BITS           =0b1,
+
+  /* sizes for value types */
+
+  CSPEC_FL_VALSIZE_0      =0b000,  // for special cases?
+  CSPEC_FL_VALSIZE_8      =0b001,
+  CSPEC_FL_VALSIZE_16     =0b010,
+  CSPEC_FL_VALSIZE_32     =0b011,
+  CSPEC_FL_VALSIZE_64     =0b100,
+  CSPEC_FL_VALSIZE_128    =0b101,
+  CSPEC_FL_VALSIZE_256    =0b110,
+  CSPEC_FL_VALSIZE_512    =0b111,
+
+  /* pointer flags */
+
+  CSPEC_FL_DATAPTR        =0b0,    // data pointer
+  CSPEC_FL_FPTR           =0b1,   // function pointer
+
+  /* array flags */
+
+  CSPEC_FL_ARRAY_FIXED    =0b0,   // an array with definite length
+  CSPEC_FL_ARRAY_FLEXIBLE =0b1,   // an array of variable length
+
+  /* builtin flags */
+
+  CSPEC_FL_LIB_FILE       =0b00000,  // FILE
+  CSPEC_FL_LIB_TM         =0b00001,  // tm
+  CSPEC_FL_LIB_DIVT       =0b00010,  // div_t
+  CSPEC_FL_LIB_LDIVT      =0b00011,  // ldiv_t
+  CSPEC_FL_LIB_LLDIVT     =0b00100,  // lldiv_t
+  CSPEC_FL_LIB_JMPBUF     =0b00101,  // jmp_buf
+  CSPEC_FL_LIB_TIMESPEC   =0b00110,  // timespec
+
+} cspec_fl_t;
+
+// C specs for C builtin and library types
+extern const uchr_t* BUILTIN_CSPECS[];
+
+uchr_t* make_cspec(cspec_head_t*,cspec_fl_t*,cspec_offset_t*,int_t);
 
 /* builtin object types */
 
 /* cons */
-
 struct cons_t {
   val_t car;
   val_t cdr;
@@ -199,27 +226,27 @@ struct vec_t {
 /* C data */
 struct cdata_t {
   struct {
-    val_t padding : 49; // ensure alignment
-    val_t sign    :  2; // none, +, or -
-    val_t bits    :  1; // regular or bit field
-    val_t size    :  3; // 8, 16, 32, 64, 128, or 256
-    val_t layout  :  3; // void, char, int, float, imag, file, function, or struct
-    val_t ptr     :  2; // value, pointer, ppointer, or pppointer
-    val_t field   :  2; // data, field, ffield, fffield
-    val_t otag    :  3; // reserved for otag
+    val_t cspec_len : 16; // the number of bytes occupied by the spec portion
+    val_t obj_len   : 45; // the number of bytes occupied by the data portion
+    val_t otag      :  3; // reserved for otag
   } head;
-  uchr_t data[32];      // object representation of the C data
+  /* 
+     object representation of the C spec and the C data 
+     (C spec is first, followed immediately by the C data).
+   */
+  uchr_t obj[1];
 };
 
 /* table */
 
 struct table_t {
   struct {
-    val_t padding      : 55;  // ensure alignment
-    val_t method_table :  1;  // flags a method table (keys are types and binding is a two element array)
-    val_t reader_table :  1;  // flags a reader table (keys must be characters and bindings must be reading procedures)
-    val_t symbol_table :  1;  // flags a symbol table (keys must be symbols)
-    val_t constant     :  1;  // flags a global constant
+    val_t padding      : 53;  // ensure alignment
+    val_t method_table :  1;  // method table (key is a type, binding is 2-element array)
+    val_t reader_table :  1;  // reader table (key is a char, binding is a reading procedure)
+    val_t symbol_table :  1;  // symbol table (key is a symbol)
+    val_t constant     :  1;
+    val_t global       :  1;  // flags a global table (eg GLOBALS)
     val_t balance      :  3;  // balance factor
     val_t otag         :  3;  // reserved for otag
   } head;
@@ -233,18 +260,19 @@ struct table_t {
 
 struct type_t {
   struct {
-    val_t padding  : 38;               // ensure alignment
-    val_t tp_base  : 16;               // base size for values of this type
-    val_t tp_fixed :  1;               // indicates whether values can exceed the base size
-    val_t tp_ltag  :  3;               // appropriate ltag for values of this type
-    val_t tp_otag  :  3;               // appropriate otag for values of this type
-    val_t otag     :  3;               // reserved for otag
+    val_t padding      : 22;               // ensure alignment
+    val_t tp_cspec_len : 16;
+    val_t tp_base      : 16;               // base size for values of this type
+    val_t tp_fixed     :  1;               // indicates whether values can exceed the base size
+    val_t tp_ltag      :  3;               // appropriate ltag for values of this type
+    val_t tp_otag      :  3;               // appropriate otag for values of this type
+    val_t otag         :  3;               // reserved for otag
   } head;
   type_t* tp_parent;                   // pointer to the parent type (if any)
   table_t* tp_fields;                  // map from rascal-accessible fields to integer offsets within the object
   val_t (*tp_new)();                   // constructor for new values of this type
   chr_t* tp_name;                      // the name for this type
-  cspec_t tp_cspec[1];                 // C-spec for this type (hangs off the end for objects with more than one field)
+  uchr_t tp_cspec[1];                  // C-spec for this type (hangs off the end for objects with more than one field)
 };
 
 /* procedure */
@@ -259,12 +287,11 @@ struct proc_t {
   } head;
   val_t env;              // the environment where the procedure was defined
   val_t formals;          // the list of formal parameters
-  val_t body;             // pointer to the procedure body (a list of expressions or a code_t object).
+  val_t body;             // pointer to the procedure body (list or code object)
 };
 
 /* code object */
 struct code_t {
-  val_t constants;       // the constant store
   val_t codesize;        // the size of the instruction sequence (in bytes)
   uchr_t code[1];        // the instruction sequence
 };
