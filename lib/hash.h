@@ -1,7 +1,7 @@
-#ifndef strlib_h
+#ifndef hash_h
 
-/* begin strlib.h */
-#define strlib_h
+/* begin hash.h */
+#define hash_h
 
 #include <string.h>
 #include <stdint.h>
@@ -39,5 +39,5 @@ int fputuc(wchar_t,FILE*);
 int fungetuc(wchar_t,FILE*);
 wint_t peekuc(FILE*);
 
-/* end strlib.h */
+/* end hash.h */
 #endif

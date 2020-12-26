@@ -15,7 +15,7 @@
 #include <time.h>
 #include <wctype.h>
 #include <locale.h>
-#include "lib/strlib.h"
+#include "lib/strutil.h"
 
 /* core type  and variable definitions go in this module */
 /* typedefs for core builtins */
@@ -33,79 +33,139 @@ typedef struct type_t type_t;
 typedef struct obj_t obj_t;
 typedef struct cons_t cons_t;
 typedef struct sym_t sym_t;
-typedef struct proc_t proc_t;
-typedef struct code_t code_t;
-typedef struct table_t table_t;
+typedef struct lambda_t lambda_t;    // generic procedure
+typedef struct proc_t proc_t;        // uncompiled procedure
+typedef struct code_t code_t;        // compiled procedure
+typedef struct table_t table_t;      // generic table type
+typedef table_t symtab_t;            // symbol table
+typedef struct methtab_t methtab_t;  // method table
 typedef struct vec_t vec_t;
 typedef struct cdata_t cdata_t;
 typedef FILE iostrm_t;
 
 #define OBJECT_HEAD     \
-  struct {              \
-  val_t type;           \
-  } head
+  val_t head
 
 struct obj_t {
   OBJECT_HEAD;
 };
 
-/* These macros provide the core api for working with values  and object types */
 
-#define tag(v)           ((v) & 0x7ul)
-#define untag(v)         (((val_t)(v)) & ~0x7ul)
-#define val(v)           (((val_t)(v)) >> 32)
-#define ptr(v)           ((void*)untag(v))
-#define cptr(v)          ((void*)(v))
-#define tagptr(p,t)      (((val_t)(p)) | (t))
-#define tagval(v,t)      ((((val_t)(v)) << 32) | (t))
-#define heapobj(v)       ((uchr_t*)ptr(v))
-#define obj(v)           ((obj_t*)ptr(v))
+#define PROC_HEAD       \
+  val_t bodysize : 41;  \
+  val_t argco    : 16;  \
+  val_t macro    :  1;  \
+  val_t vargs    :  1;  \
+  val_t ptype    :  2;  \
+  val_t otag     :  3;  \
+  val_t env
+
+struct lambda_t {
+  PROC_HEAD;
+};
+
+typedef enum rsp_proctypes_t {
+  PROCTYPE_EXPRESSION,
+  PROCTYPE_COMPILED,
+} rsp_proctypes_t;
+
+#define TABLE_HEAD        \
+  val_t padding  : 55;    \
+  val_t constant :  1;    \
+  val_t balance  :  3;    \
+  val_t ttype    :  2;    \
+  val_t otag     :  3;    \
+  val_t key;              \
+  val_t binding;	  \
+  val_t left;		  \
+  val_t right
+
+struct table_t {
+  TABLE_HEAD;
+};
+
+typedef enum rsp_tabletypes_t {
+  TABLETYPE_SYMTAB,
+  TABLETYPE_METHTAB,
+  TABLETYPE_READTAB,
+  TABLETYPE_DICT,
+} rsp_tabletypes_t;
 
 /* 
-   tag values
+   tag definitions 
 
-   The lowtag indicates how to read the type and data on a val_t. Direct objects store their
-   type information and data in the word itself. Object pointers point to an object head 
-   with a type field. Cons pointers point to a cons cell that may or may not also be a list
-   (the list invariant has not been checked). It has a type of cons. A list pointer points to
-   a cons whose list invariant has been checked. It has a type of cons. A string pointer
-   points to a utf-8 encoded null terminated bytestring. It has a type of str. 
+   tags are composed of 3-to-8-bit tags stored on all legal rascal values, and 4-bit tags stored on all rascal objects. All tags
+   can be translated into an 8-bit tag that allows rascal to unambiguously find the type of a rascal value. The tags are read as
+   follows:
 
-   The lowtag consobj, listobj, and strobj are pointers to objects whose only data member is
-   a cons (stored directly), a list pointer (stored as a pointer), or an array of bytes that
-   may be binary data or text data (the bytes begin immediately after the object head). These
-   are included to allow future subtyping of any builtin type with a consistent API.
+   If the first three bits are 0, the first 8 bits are returned (gives the tag for most direct data).
 
-   Other C types can be represented, but cannot be represented directly as val_t for memory
-   safety (cdata_t is an example).
-   
-   The tag and typecode system is set up so that the special value NIL is identical to the
-   C value NULL (NIL has a lowtag of LOWTAG_DIRECT and its typecode is 0).
-*/
+   If the first bit is 0, the first three bits are returned.
 
-typedef enum ltag_t {
-  LOWTAG_DIRECT    =0b000ul,   // direct data
-  LOWTAG_OP        =0b001ul,   // a special lowtag for VM opcodes
-  LOWTAG_CONS      =0b010ul,   // a pointer to a cons
-  LOWTAG_STR       =0b011ul,   // a pointer to a string
-  LOWTAG_SYM       =0b100ul,   // a pointer to a symbol
-  LOWTAG_CODE      =0b101ul,   // a pointer to compiled code
-  LOWTAG_IOSTRM    =0b110ul,   // a C FILE object
-  LOWTAG_OBJ       =0b111ul,   // a pointer to a rascal object
-} ltag_t;
+   If the first bit is 1, the first 4 bits are examined:
+   * If the numeric value of the first 4 bits is less than 13, the first 4 bits are returned
+   * If the numeric value of the first 4 bits is equal to 13, the first 4-bit object tag is retrieved, padded by 4, and OR'd to the
+     first 4 bits
+   * Otherwise, 255 is returned (a special tag indicating the unique value NONE)
 
-typedef enum otag_t {
-  OBJTAG_RECORD     =0b000ul,  // standard object type with a type-defined number of named fields
-  OBJTAG_VECTOR     =0b001ul,  // a vector of lisp values
-  OBJTAG_TABLE      =0b010ul,  // table
-  OBJTAG_PROC       =0b011ul,  // object is a procedure object
-  OBJTAG_BUILTIN    =0b100ul,  // subtype of a builtin type; first element is pointer to type and remainder is laid out like parent
-  OBJTAG_BUILTINPTR =0b101ul,  // like OBJTAG_BUILTIN, but the only element is a pointer to an object of the parent type
-  OBJTAG_CDATA      =0b110ul,  // arbitrary C data (the object head includes necessary information for interpreting the data).
-  OBJTAG_TYPE       =0b111ul,  // A type object
-} otag_t;
+   The resulting tag allows the value's type_t object to be retrieved.
+
+   This system has the consequence that it allows NIL to be equal to C NULL and NONE to be equal to C -1. 
+
+ */
 
 
+
+typedef enum {
+  LTAG_DIRECT           =0b0000ul,   // direct data
+  LTAG_CPTR_IOSTREAM    =0b0010ul,   // a pointer to a C FILE object
+  LTAG_CPTR_BUILTIN     =0b0100ul,   // a pointer to a builtin rascal function
+  LTAG_CPTR_OTHER       =0b0110ul,   // a pointer to arbitrary other C data, no C spec given (only allowed in special instances)
+  LTAG_LPTR_CONS        =0b0001ul,   // a pointer to a cons
+  LTAG_LPTR_LIST        =0b0011ul,   // a pointer to a list
+  LTAG_LPTR_CONSOBJ     =0b0101ul,   // a pointer to a cons proxy object
+  LTAG_LPTR_SEQ         =0b0111ul,   // a pointer to a sequence (a special case of a cons object).
+  LTAG_LPTR_STR         =0b1001ul,   // a pointer to a rascal string
+  LTAG_LPTR_VEC         =0b1011ul,   // a pointer to a rascal vector
+  LTAG_LPTR_OBJ         =0b1101ul,   // a pointer to an object (read otag).
+  OTAG_NONE             =0b0000ul,   // sentinel indicating not to use the otag
+  OTAG_TYPE             =0b0001ul,   // a type object
+  OTAG_ARRAY            =0b0010ul,   // an n-dimensional array
+  OTAG_PROC             =0b0011ul,   // object is laid out like a procedure
+  OTAG_ATOM             =0b0100ul,   // object is an atom (hash of a non-string, non-direct object).
+  OTAG_TABLE            =0b0101ul,   // object is laid out like a table
+  OTAG_SUBTYPE_NOMINAL  =0b0110ul,   // subtype of a builtin type; after the object head, the layout follows its parent type
+  OTAG_SUBTYPE_EXTENDED =0b0111ul,   // subtype of a builtin type, plus additional fields
+  OTAG_CVALUE           =0b1000ul,   // a lisp value storing C data with a type-defined C spec (used to implement big floats, etc).
+  OTAG_RECORD           =0b1001ul,   // an object with a fixed number of type defined fields
+  OTAG_CDATA_64         =0b1010ul,   // 64-bits of C data, stored directly, including a 1-byte C spec
+  OTAG_CDATA_128        =0b1011ul,   // 128-bits of C data, stored directly, including a 1-byte C spec
+  OTAG_CDATA_256        =0b1100ul,   // 256-bits of C data, stored directly, including a 1-byte C spec
+  OTAG_CDATA_OBJECT     =0b1011ul,   // arbitrary C data, stored directly, including a a multi-byte C spec
+  OTAG_CDATA_PTR        =0b1100ul,   // a pointer to arbitrary C data, including a multi-byte C spec
+  WTAG_NIL              =0,
+  WTAG_IOSTREAM         =LTAG_CPTR_IOSTREAM,
+  WTAG_CPTR_BUILTIN     =LTAG_CPTR_BUILTIN,
+  WTAG_CPTR_OTHER       =LTAG_CPTR_OTHER,
+  WTAG_CONS             =LTAG_LPTR_CONS,
+  WTAG_LIST             =LTAG_LPTR_LIST,
+  WTAG_CONSOBJ          =LTAG_LPTR_CONSOBJ,
+  WTAG_SEQ              =LTAG_LPTR_SEQ,
+  WTAG_STR              =LTAG_LPTR_STR,
+  WTAG_VEC              =LTAG_LPTR_VEC,
+  WTAG_INT              =0b00010000ul,   // integers
+  WTAG_FLOAT            =0b00100000ul,   // floats
+  WTAG_IMAG             =0b00110000ul,   // imaginary number
+  WTAG_REAL             =0b01000000ul,   // special numeric values like inf and NaN
+  WTAG_BOOL             =0b01010000ul,   // booleans
+  WTAG_CHAR             =0b01100000ul,   // utf-32 character
+  WTAG_CDATA_32         =0b01110000ul,   // C data up to 32 bits with a stored C spec (next byte).
+  WTAG_TYPE             =(OTAG_TYPE << 4) || LTAG_LPTR_OBJ,
+  WTAG_ARRAY            =(OTAG_ARRAY << 4) || LTAG_LPTR_OBJ,
+  WTAG_PROC             =(OTAG_PROC << 4) || LTAG_LPTR_OBJ,
+  WTAG_ATOM             =(OTAG_ARRAY << 4) || LTAG_LPTR_OBJ,
+  WTAG_NONE             =255,
+} tag_t;
 /* 
    C specs for interpreting rascal values as C data.
 
@@ -174,14 +234,29 @@ typedef enum cspec_fl_t {
 
   /* pointer flags */
 
-  CSPEC_FL_DATAPTR        =0b0,    // data pointer
-  CSPEC_FL_FPTR           =0b1,   // function pointer
+  CSPEC_FL_DATAPTR        =0b00,    // data pointer
+  CSPEC_FL_FPTR           =0b10,    // function pointer
+  CSPEC_FL_PTR_BACKREF    =0b01,    // the pointer refers to data defined earlier in the spec
+  
+  /* struct flags */
 
+  CSPEC_FL_STRUCT_START   =0b00000,   // start of a struct
+  CSPEC_FL_UNION_START    =0b00100,   // start of a union
+  CSPEC_FL_STRUCT_FIELD   =0b01000,   // start of a regular field
+  CSPEC_FL_STRUCT_BFIELD  =0b01100,   // start of a bitfield
+  CSPEC_FL_STRUCT_END     =0b10000,
+  CSPEC_FL_UNION_END      =0b10100,
+  CSPEC_FL_STRUCT_PACKED  =0b00001,
+  CSPEC_FL_STRUCT_ALIGNED =0b00010,
+  
   /* array flags */
 
   CSPEC_FL_ARRAY_FIXED    =0b0,   // an array with definite length
   CSPEC_FL_ARRAY_FLEXIBLE =0b1,   // an array of variable length
 
+
+  
+  
   /* builtin flags */
 
   CSPEC_FL_LIB_FILE       =0b00000,  // FILE
@@ -216,20 +291,15 @@ struct sym_t {
 
 /* vector */
 struct vec_t {
-  struct {
-    val_t length : 61;
-    val_t otag   :  3;
-  } head;
+  val_t size;
   val_t elements[1];
 };
 
 /* C data */
 struct cdata_t {
-  struct {
-    val_t cspec_len : 16; // the number of bytes occupied by the spec portion
-    val_t obj_len   : 45; // the number of bytes occupied by the data portion
-    val_t otag      :  3; // reserved for otag
-  } head;
+  val_t cspec_len : 16; // the number of bytes occupied by the spec portion
+  val_t obj_len   : 45; // the number of bytes occupied by the data portion
+  val_t otag      :  3; // reserved for otag
   /* 
      object representation of the C spec and the C data 
      (C spec is first, followed immediately by the C data).
@@ -239,61 +309,44 @@ struct cdata_t {
 
 /* table */
 
-struct table_t {
-  struct {
-    val_t padding      : 53;  // ensure alignment
-    val_t method_table :  1;  // method table (key is a type, binding is 2-element array)
-    val_t reader_table :  1;  // reader table (key is a char, binding is a reading procedure)
-    val_t symbol_table :  1;  // symbol table (key is a symbol)
-    val_t constant     :  1;
-    val_t global       :  1;  // flags a global table (eg GLOBALS)
-    val_t balance      :  3;  // balance factor
-    val_t otag         :  3;  // reserved for otag
-  } head;
-  val_t key;
-  val_t left;
-  val_t right;
-  val_t binding[1];
+struct methtab_t {
+  TABLE_HEAD;
+  val_t next;       // next method in the chain
 };
 
 /* types */
 
 struct type_t {
-  struct {
-    val_t padding      : 22;               // ensure alignment
-    val_t tp_cspec_len : 16;
-    val_t tp_base      : 16;               // base size for values of this type
-    val_t tp_fixed     :  1;               // indicates whether values can exceed the base size
-    val_t tp_ltag      :  3;               // appropriate ltag for values of this type
-    val_t tp_otag      :  3;               // appropriate otag for values of this type
-    val_t otag         :  3;               // reserved for otag
-  } head;
-  type_t* tp_parent;                   // pointer to the parent type (if any)
-  table_t* tp_fields;                  // map from rascal-accessible fields to integer offsets within the object
-  val_t (*tp_new)();                   // constructor for new values of this type
+  val_t cspec_len    : 37;               // ensure alignment
+  val_t tp_builtin   :  1;
+  val_t tp_fixed     :  1;
+  val_t tp_base      : 16;                 // base size for values of this type
+  val_t tp_ltag      :  3;                 // appropriate ltag for values of this type
+  val_t tp_otag      :  3;                 // appropriate otag for values of this type
+  type_t* tp_parent;                       // pointer to the parent type (if any)
+  symtab_t* tp_fields;                     // map from rascal-accessible fields to integer offsets within the object
+  val_t (*tp_new)(val_t*,int_t);           // constructor for new values
+  val_t (*tp_getf)(val_t,val_t);           // field accessor
+  val_t (*tp_setf)(val_t,val_t,val_t);     // field setter
+  val_t (*tp_getk)(val_t,val_t);           // index accessor
+  val_t (*tp_setk)(val_t,val_t,val_t);     // index setter
+  void  (*tp_unwrap)(uchr_t*,int_t,void*); // 
   chr_t* tp_name;                      // the name for this type
   uchr_t tp_cspec[1];                  // C-spec for this type (hangs off the end for objects with more than one field)
 };
 
 /* procedure */
 struct proc_t {
-  struct {
-    val_t padding  : 42;  // length of the body in bytes (only used for compiled procedures)
-    val_t compiled :  1;  // boolean flag for compiled code
-    val_t macro    :  1;  // boolean flag for macros
-    val_t vargs    :  1;  // bolean flag for whether the procedure accepts vargs
-    val_t argco    : 16;  // minimum argcount
-    val_t otag     :  3;  // reserved for the otag
-  } head;
-  val_t env;              // the environment where the procedure was defined
+  PROC_HEAD;
   val_t formals;          // the list of formal parameters
-  val_t body;             // pointer to the procedure body (list or code object)
+  val_t body;             // pointer to a list of expressions
 };
 
 /* code object */
 struct code_t {
-  val_t codesize;        // the size of the instruction sequence (in bytes)
-  uchr_t code[1];        // the instruction sequence
+  PROC_HEAD;
+  val_t values;           // constants store
+  uchr_t code[1];         // instructions
 };
 
 /* tokenizer */
@@ -382,27 +435,6 @@ typedef enum rxid_t {
   RXID_WRZ,
 } rxid_t;
 
-// C operations (mostly arithmetic, comparison, and bitwise operators; used to simplify)
-typedef enum cop_t {
-  COP_ADD,
-  COP_SUB,
-  COP_MUL,
-  COP_DIV,
-  COP_REM,
-  COP_EQ,
-  COP_NEQ,
-  COP_LT,
-  COP_GT,
-  COP_LE,
-  COP_GE,
-  COP_LSH,
-  COP_RSH,
-  COP_BAND,
-  COP_BOR,
-  COP_XOR,
-  COP_BNEG,
-} cop_t;
-
 void fetch();
 void decode();
 void execute();
@@ -414,36 +446,50 @@ void peek(int_t,rxid_t);
 
 enum {
 
-  /* 0 argument opcodes */
+  /* 0 argument opcodes (mostly arithmetic) */
 
   OP_HALT,
+  OP_ADD,
+  OP_SUB,
+  OP_MUL,
+  OP_DIV,
+  OP_REM,
+  OP_NEQ,
+  OP_CEQ,
+  OP_LT,
+  OP_LEQ,
+  OP_GT,
+  OP_GEQ,
+  OP_RSH,
+  OP_LSH,
+  OP_BAND,
+  OP_BOR,
+  OP_BXOR,
+  OP_BNEG,
   OP_APPLY,
   OP_RETURN,
   ZEROARG_OPS = OP_RETURN,
   
   /* 1 argument opcodes */
-
   OP_PUSH,                  // register id
   OP_POP,                   // register id
-  OP_TBRANCH,               // code offset
-  OP_NBRANCH,               // code offset
+  OP_PUTE,                  // register id
+  OP_LOADV,                 // value offset
+  OP_BRANCH_T,              // code offset
+  OP_BRANCH_NIL,            // code offset
   OP_JUMP,                  // code offset
   UNARG_OPS = OP_JUMP,    
 
   /* 2 argument opcodes */
-  OP_COP,                   // op id, argcount
   OP_PEEK,                  // stack offset, register id
-  OP_LOADV,                 // frame offset, local offset
-  BINARG_OPS = OP_LOADV,
+  OP_LOADE,                 // frame offset, local offset
+  OP_STORE,                 // frame offset, local offset
+  BINARG_OPS = OP_LOADE,
   
   /* 3 argument opcodes */
 
   OP_CCALL,                 // function id, expected return type, number of arguments
   TERNARG_OPS = OP_CCALL,
-
-  /* special opcodes */
-  OP_LOADC,                 // interpret the next 8 bytes as constant direct data
-  OP_LOADS,                 // interpret the next word-aligned set of bytes as a string literal and load a reference to it
 };
 
 // a separate set of labels to jump to when ERRORCODE is nonzero

@@ -1,4 +1,4 @@
-#include "strlib.h"
+#include "hash.h"
 
 
 hash_t hash_string(const char* s) {
