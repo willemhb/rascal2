@@ -48,6 +48,11 @@ unsigned long cpow2_64(long l) {
   return v;
 }
 
+inline unsigned long clog2(unsigned long i) {
+  if (!i) return 1;
+  else return 64 - __builtin_clzl(i);
+}
+
 hash64_t hash_str(const char* s) {
   hash64_t out = FNV_1A_64_OFFSET;
   int limit = strlen(s);
@@ -127,10 +132,21 @@ int peekwc(FILE* f) {
   return wc;
 }
 
-void fskip(FILE* f) {
+int fskip(FILE* f) {
   wint_t wc;
   while ((wc = fgetwc(f)) != WEOF && iswspace(wc)) continue;
-  return;
+  if (wc == WEOF) return WEOF;
+
+  ungetwc(wc,f);
+  return wc;
+}
+
+int fskipto(FILE* f, wint_t s)
+{
+  wint_t wc;
+  while ((wc = fgetwc(f)) != WEOF && wc != s) continue;
+  if (wc == WEOF) return WEOF;
+  else return peekwc(f); // peek the next character after the sentinel
 }
 
 inline int iswbdigit(wint_t c) {

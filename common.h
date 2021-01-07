@@ -49,15 +49,17 @@ typedef uintptr_t val_t;   // a rascal value; all functions that expect rascal v
 typedef uint64_t hash64_t; // a 64-bit hash
 
 // C representation of different object types
+typedef struct list_t list_t;
 typedef struct cons_t cons_t;
 typedef struct sym_t sym_t;
-typedef struct fvec_t fvec_t;
 typedef struct node_t node_t;
-typedef struct type_t type_t;
-typedef struct obj_t obj_t;
-typedef struct proc_t proc_t;
+typedef struct fvec_t fvec_t;
 typedef struct dvec_t dvec_t;
+typedef struct code_t code_t;
+typedef struct obj_t obj_t;
 typedef struct table_t table_t;
+typedef struct function_t function_t;
+typedef struct type_t type_t;
 
 // type signature for builtin C functions - the first argument is an array of arguments and the second is the size of the array
 typedef val_t (*rsp_cfunc_t)(val_t*,int);
@@ -68,36 +70,45 @@ typedef struct _rsp_ectx_t rsp_ectx_t;
 // value tags for determining type - the current system is forward compatible with planned extensions
 typedef enum {
   LTAG_LIST             =0x00,  // a list pointer (may be nil)
-  LTAG_CFILE            =0x01,  // a C file pointer
-  LTAG_STR              =0x03,  // a C string
-  LTAG_CONS             =0x04,  // a non-list cons
+  LTAG_CONS             =0x01,  // a non-list cons
+  LTAG_STR              =0x02,  // a C string
+  LTAG_CVALUE           =0x03,  // a tagged C value (not implemented)
+  LTAG_CFILE            =0x04,  // a C file pointer
   LTAG_SYM              =0x05,  // a pointer to a symbol
+
+  // special objects used by the VM or as building blocks for user types
   LTAG_NODE             =0x06,  // an AVL node (low level type used to implement other types)
-  LTAG_FVEC             =0x07,  // a fixed-length vector or bitmapped vector
+  LTAG_FVEC             =0x07,  // a fixed-length vector
   LTAG_DVEC             =0x08,  // a dynamic vector
-  LTAG_TABLE            =0x09,  // a table object
-  /* the following types have an explicit type pointer, with optional flags stored in the low bits prefix */
-  LTAG_FUNCTION         =0x0a,  // a closure object
-  LTAG_META             =0x0b,  // a metaobject (implicitly a type)
-  LTAG_OBJECT           =0x0c,  // a common object
-  LTAG_BIGNUM           =0x0d,  // a heap-allocated numeric type (not implemented)
-  LTAG_DIRECT           =0x0f,  // special ltag indicating a wide direct tag
-  LTAG_INT              =0x1f,  
-  LTAG_CHAR             =0x2f,
-  LTAG_BOOL             =0x3f,
-  LTAG_BUILTIN          =0x4f,  // a builtin C function; the numeric value is it index in the builtin functions array, and it stores
+  LTAG_CODE             =0x09,  // a compiled bytecode object
+
+  /* types with explicit (possibly flagged) type pointers */
+
+  LTAG_OBJECT           =0x0a,  // a common data object
+  LTAG_TABLEOBJ         =0x0b,  // a table object
+  LTAG_FUNCOBJ          =0x0c,  // a common function object with a captured closure
+  LTAG_METAOBJ          =0x0d,  // a metaobject (implicitly a type)
+  LTAG_BIGNUM           =0x0f,  // a heap-allocated numeric type (not implemented)
+  LTAG_INT              =0x1f,
+  LTAG_FLOAT            =0x2f,
+  LTAG_CHAR             =0x3f,
+  LTAG_BOOL             =0x4f,
+  LTAG_BUILTIN          =0x5f,  // a builtin C function; the numeric value is an array index
   LTAG_NONE             =0xff,  // flags in the 2nd byte and its argument count in bytes 3-4
 } ltag_t;
 
 #define MAX_CORE_OBJECT_TYPES 16
 #define MAX_CORE_DIRECT_TYPES 16
-#define NUM_BUILTIN_FUNCTIONS 256
+#define NUM_BUILTIN_FUNCTIONS 64
 extern type_t* CORE_OBJECT_TYPES[MAX_CORE_OBJECT_TYPES];
 extern type_t* CORE_DIRECT_TYPES[MAX_CORE_DIRECT_TYPES];
+// these arrays store the callables and metadata for builtin functions
 extern rsp_cfunc_t BUILTIN_FUNCTIONS[NUM_BUILTIN_FUNCTIONS];
-extern char* BUILTIN_FUNCTION_NAMES[NUM_BUILTIN_FUNCTIONS];
+extern int         BUILTIN_FUNCTION_ARGCOS[NUM_BUILTIN_FUNCTIONS];
+extern bool        BUILTIN_FUNCTION_VARGS[NUM_BUILTIN_FUNCTIONS];
+extern char*       BUILTIN_FUNCTION_NAMES[NUM_BUILTIN_FUNCTIONS];
 
-// these flags represent a mix of metadata, disambiguating tags, and object flags; these flags can always be found in
+// these flags represent a mix of metadata and special vm flags; they can always be found in
 // the 4 least-significant bits of the first element of the object
 typedef enum {
   // symbol flags
@@ -107,10 +118,19 @@ typedef enum {
   SYMFLAG_GENSYM     =0b1000ul,
 
   // procedure flags
-  PROCFLAG_MACRO     =0b0001ul,  // this closure should be executed as a macro
-  PROCFLAG_VARGS     =0b0010ul,  // this closure accepts variable arguments
-  PROCFLAGS_VARKW    =0b0100ul,  // this closure accepts variable keyword arguments
-  PROCFLAGS_GENERIC  =0b1000ul,  // this closure has multiple implementations
+  FUNCFLAG_MACRO    =0b0001ul,  // this closure should be executed as a macro
+  FUNCFLAG_VARGS    =0b0010ul,  // this closure accepts variable arguments
+  FUNCFLAG_VARKW    =0b0100ul,  // this closure accepts variable keyword arguments
+  FUNCFLAG_METHOD   =0b1000ul,  // this closure is one of multiple implementations
+
+  // dvec flags
+  DVECFLAG_ENVTFRAME =0b0001ul,
+
+  // table flags
+  TABLEFLAG_SYMTAB   =0b0001ul,
+  TABLEFLAG_ENVT     =0b0010ul,
+  TABLEFLAG_NMSPC    =0b0011ul,
+  TABLEFLAG_READTAB  =0b0100ul,
 
   // sentinel flag - 8-bits wide, can't clash with other flags
   FLAG_NONE          =LTAG_NONE,
@@ -135,19 +155,50 @@ typedef enum {
   WRX_7       =0x4000,
 } rx_map_t;
 
+typedef enum {
+  LBL_LITERAL,
+  LBL_SYMBOL,
+  LBL_QUOTE,
+  LBL_DEF,
+  LBL_SETV,
+  LBL_FUN,
+  LBL_MACRO,
+  LBL_LET,
+  LBL_DO,
+  LBL_IF,
+  LBL_FUNAPP,
+} rsp_label_t;
+
 // macros for describng object heads
 #define OBJECT_HEAD	              \
   val_t type
 
-// union type to represent C version of all builtin direct types and different object heads
+// union type to represent different direct types, plus a struct for accessing the parts
+// of an iee754 float
 typedef union {
   int integer;
   float float32;
   wchar_t unicode;
   bool boolean;
-  unsigned bits;
-} rsp_direct_ctypes_t;
+  struct {
+    unsigned fl_sign     :  1;
+    unsigned fl_expt     :  8;
+    unsigned fl_mant     : 23;
+  } flbits;
+  unsigned bits32;
+} rsp_c32_t;
 
+// union type to represent and manipulate different direct types without padding/unpadding
+typedef union {
+  struct {
+    rsp_c32_t data;
+    unsigned padding : 24;
+    unsigned lowtag  :  8;
+  } direct;
+  uptr_t value;
+} rsp_c64_t;
+
+// 
 /* 
    C api and C descriptions of rascal values
 
@@ -179,7 +230,33 @@ typedef enum {
 
 typedef enum {
   OP_HALT,
-  OP_LOAD_CONSTANT,
+  
+  /* LOAD instructions leave their arguments in VALUE */
+
+  OP_LOAD_RX,              // put the value of a register into VALUE
+  OP_LOAD_VALUES,          // an index in the values store
+  OP_LOAD_NAME,            // lookup a a namespace binding
+  OP_LOAD_VAR,             // a variable reference (offset . local)
+
+  /* 
+
+     STORE instructions take a reference (either opcode args or contents of VALUE)
+     and put the value on top of EVAL in the associated location.
+
+   */
+
+  OP_STORE_NAME,           // assign the value of a namespace name
+  OP_STORE_VAR,            // assign the value of a lexical variable
+  OP_BIND,                 // bind the top N values from EVAL into corresponding ENVT locations
+  OP_BRANCH,               // unconditional branch to a label
+  OP_BRANCH_T,             // jump to a label if VALUE is non-false
+  OP_BRANCH_F,             // jump to a label if VALUE is false
+  OP_PUSH,                 // takes one argument, a register ID
+  OP_POP,                  // takes one argument, a register ID
+  OP_SAVE,                 // save a continuation
+  OP_RESTORE,              // restore the indicated saved continuation
+  OP_APPLY,                // apply the procedure in VALUE with the values on EVAL
+  OP_APPLY_BUILTIN,        // fast application of a builtin procedure (no ENVIRONMENT set up)
 } opcode_t;
 
 /* builtin reader tokens */
@@ -189,28 +266,36 @@ typedef enum {
   TOK_RPAR,
   TOK_DOT,
   TOK_QUOT,
-  TOK_NUM,
+  TOK_INT,
+  TOK_FLOAT,
   TOK_STR,
   TOK_SYM,
-  TOK_SLASH,
+  TOK_CHAR,
+  TOK_UNICODE,
   TOK_EOF,
   TOK_NONE,
   TOK_STXERR,
 } rsp_tok_t;
 
 // error handling
-
 typedef enum {
   TYPE_ERR,    // invalid type
   NULL_ERR,    // a null pointer was encountered
   NONE_ERR,    // unexpected none
   UNBOUND_ERR, // unbound symbol
+  ENVT_ERR,    // an invalid argument to an environment API function
   VALUE_ERR,   // unexpected value
   BOUNDS_ERR,  // bad array access
   ARITY_ERR,   // wrong argument count
+  SYNTAX_ERR,  // bad syntax
+  NAME_ERR,    // attempt to rebind a constant
 } rsp_err_t;
 
-const char* ERROR_NAMES[] = { "type", "null", "none", "unbound", "value", "bounds", "arity" };
+const char* ERROR_NAMES[] = {
+  "type", "null", "none", "unbound",
+  "envt", "value", "bounds", "arity",
+  "syntax", "name",
+};
 
 /*
 
@@ -221,70 +306,97 @@ const char* ERROR_NAMES[] = { "type", "null", "none", "unbound", "value", "bound
   LTAG_STR       = 0x02,  // a utf-8 string
   LTAG_CVALUE    = 0x03,  // a tagged C value or pointer
   LTAG_CFUNC     = 0x04,  // a C function pointer
-  LTAG_SYM       = 0x05,  
-  LTAG_BIGNUM    = 0x06,  // an annotated numeric type 64-bits or greater
+  LTAG_SYM       = 0x05,  // a symbol
 
-  // untagged objects either used by the VM or included to be used as efficient building blocks for user types
-  LTAG_BV32      = 0x07,  // a bitmapped vector of up to 32 elements, with 27 to 59 bits available for flags
-  LTAG_BV64      = 0x08,  // a bitmapped vector of up to 64 elements, with 61 bits available for flags
-  LTAG_CARRAY    = 0x09,  // a general representation of a C array with type and sizing information
-  LTAG_CODE      = 0x0a,  // a compiled bytecode object
+  // untagged objects either used by the VM or as efficient building blocks for user types
+  LTAG_BV32      = 0x06,  // a bitmapped vector of up to 32 element and 27 to 59 bits for flags
+  LTAG_BV64      = 0x07,  // a bitmapped vector of up to 64 elements, and 61 bits for flags
+  LTAG_ARRAY     = 0x08,  // a generalized array with type and size information
+  LTAG_CODE      = 0x09,  // a compiled bytecode object
 
-  // these object types comprise core user-extensible types and include explicit type pointers in their object heads
+  // these types have explicit type pointer
+  LTAG_TABLEOBJ  = 0x0a,  // a hash-table object
   LTAG_RECORDOBJ = 0x0b,  // a common object with type-defined fields
   LTAG_FUNCOBJ   = 0x0c,  // a common function object
-  LTAG_METAOBJ   = 0x0d,  // a meta-object (considered a function, but the memory layout is different)
+  LTAG_METAOBJ   = 0x0d,  // a meta-object (considered a function, but with different layout)
+  LTAG_BIGNUM    = 0x0f,  // a large numeric datatype stored in the heap
 
   // direct data with an 8-bit ltag
-  LTAG_INT       = 0x0f,  // a 56-bit signed integer (common integer type)
-  LTAG_BOOL      = 0x1f,  // boolean type
-  LTAG_CHAR      = 0x2f,  // a utf-32 character (a unicode codepoint)
-  LTAG_FLOAT     = 0x3f,  // a 32-bit iee754 float
-  LTAG_IMAG      = 0x4f,  // a 32-bit imaginary float
-  LTAG_CMPLX     = 0x5f,  // a 32-bit complex number
+  LTAG_INT       = 0x1f,  // a 56-bit signed integer (common integer type)
+  LTAG_FLOAT     = 0x2f,  // a 32-bit iee754 float
+  LTAG_IMAG      = 0x3f,  // a 32-bit imaginary float
+  LTAG_CMPLX     = 0x4f,  // a 32-bit complex number
 
   // lower level integer types
-  LTAG_INT32     = 0x6f,  // a 32-bit signed integer
-  LTAG_UINT32    = 0x7f,  // a 32-bit unsigned integer
-  LTAG_INT16     = 0x8f,  // a 16-bit signed integer
-  LTAG_UINT16    = 0x9f,  // a 16-bit unsigned integer
-  LTAG_INT8      = 0xaf,  // an 8-bit signed integer
-  LTAG_UINT8     = 0xbf,  // an 8-bit unsigned integer
+  LTAG_INT32     = 0x5f,  // a 32-bit signed integer
+  LTAG_UINT32    = 0x6f,  // a 32-bit unsigned integer
+  LTAG_INT16     = 0x7f,  // a 16-bit signed integer
+  LTAG_UINT16    = 0x8f,  // a 16-bit unsigned integer
+  LTAG_INT8      = 0x9f,  // an 8-bit signed integer
+  LTAG_UINT8     = 0xaf,  // an 8-bit unsigned integer
 
-  // arbitrary 32-bit C data with additional type information stored in the next byte
-  LTAG_C32       = 0xcf,  // 32-bits of arbitrary C data with an explicit tag
+  // other direct types
+  LTAG_BOOL      = 0xbf,  // boolean type
+  LTAG_CHAR      = 0xcf,  // a utf-32 character (a unicode codepoint)
+  LTAG_BUILTIN   = 0xdf,  // a builtin function stored in a special array
   LTAG_NONE      = 0xff,  // a special ltag for NONE
 
-  Under this system the BV32, BV64, and CARRAY types are intended as workhorse data structures that can be used to efficiently and
-  programatically implement a variety of user-defined data structures. My goal is to be able to infer an appropriate bitvector
-  implementation from a well-formed type definition. The resulting type will then be a record object with the desired metadata
-  and a pointer to the beginning of the linked structure.
+  Under this system the BV32, BV64, and CARRAY types are intended as workhorse data structures 
+  that can be used to efficiently and programatically implement a variety of user-defined data
+  structures. My goal is to be able to infer an appropriate bitvector implementation from a 
+  well-formed type definition. The resulting type will then be a record object with the desired
+  metadata and a pointer to the beginning of the linked structure.
 
-  proposed control flow primitives (based on delimited continuations; t is a prompt tag; if not supplied, defaults to :toplevel)
+  proposed control flow primitives (based on delimited continuations; t is a prompt tag; 
+  if not supplied, defaults to :toplevel)
 
-      * (cntl & t)     - install a capture/escape point marked with the tags t
+      * (label & t)     - install a capture/escape point marked with the tags t
 
-      * (cc &t)        - capture a continuation up to the nearest enclosing tag t
+      * (cc &t)         - capture a continuation up to the nearest enclosing tag t
       
-      * (go &t &val)   - jump to the nearest matching capture point with tag t, supplying val as the result of the procedure at
-                         the save point.
+      * (go k val)      - call the continuation associated with k, supplying val as
+                          the result of the computation; k can be a continuation or a
+                          any type that's a valid argument to label
 
-      * (hndl &t)      - preempt discharges of the matching tag t
+      * (hndl t h)      - preempt calls to go with a matching tag, executing h with
+                          the arguments supplied to go
 
-  These primitives aren't intended to be used in everyday code, but to provide a highly extensible basis for efficiently
-  implementing other control flow operators. The standard library should provide:
+  These primitives aren't intended to be used in everyday code, but to provide a highly 
+  extensible basis for efficiently implementing other control flow operators. The standard
+  library should provide:
 
      * try/catch/throw/raise (continuable throw)
      * coro/yield
      * async/await
-     * with (io context-handler/concurrency manager)
+     * with (installs io handlers; by default, ensures that streams are cleaned up on
+       exit, but can be called with additional handlers to deal with synchronization
+       and network IO)
 
-     an example of try/catch/raise implemented using these operators:
+  proposed extension primitives:
 
-     (defmac try   [& exprs]     `(cntl :exception ~@exprs (hndl :exception (fn [e &msg] (raise e &msg)))))
-     (defmac catch [e & exprs]   `(hndl ~e ~@exprs))
-     (defmac raise [e &msg]      `(cc k (go ~e &msg)))
-     
+  "type extension primitives" are really just metaobjects, which are considered functions
+  and therefore callable. The proposed metatypes in this system are:
+
+     * type - concrete datatype metatype; calling should return a new type object describing
+       the storage type, fields, and field constraints specified by the arguments.
+
+     * class - a class metaboject, aka an interface or typeclass. The arguments are a name
+       and a set of function signatures, and the return value is a new class object describing
+       the set of functions member types must implement. Class objects can be called with
+       a type object and a set of function objects, creating an implementation of that class
+       for the type and adding the type to the class's set of members.
+
+   proposed module system:
+
+   The module system should be as simple as possible while maintaining clean namespaces. The
+   current proposal is a system built around a single special form. As in Python, the code
+   in a file is treated as a module without needing to be specified as such (a module special
+   form should probably be provided anyway).
+
+      * (import fname-or-optlist ...) - load each file specified in the list of arguments
+        and bind it to a namespace in the current environment. By default each binding in
+	a module 'fname.rsp' is exported as <fname>/<binding>, but these can be changed by
+	supplying a list of options whose first element is the filename.
 
  */
 
