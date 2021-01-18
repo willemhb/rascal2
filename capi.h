@@ -15,7 +15,19 @@
 
  */
 
-const char* BUILTIN_FUNCNAMES[NUM_BUILTIN_FUNCTIONS] = {   };
+
+const char* BUILTIN_FUNCNAMES[NUM_BUILTIN_FUNCTIONS] =
+  {
+  "alpha?", "alnum?",  "lower?", "upper?",
+  "digit?", "xdigit?", "cntrl?", "graph?",
+  "space?", "blank?", "print?", "punct?",
+  "upper", "lower", "osgetenv", "exit",
+  "open", "close", "eof?", "getc", "putc",
+  "peekc", "gets", "puts",
+  };
+
+/* a few C api helpers */
+char* strval(val_t,const char*,int,const char*);        // try to get a string representation of a rascal value
 
 /* inlined functional bindings for C arithmetic */
 // arithmetic
@@ -84,72 +96,44 @@ long lsh_ll(long,long);
 long rsh_ll(long,long);
 long bneg_l(long);
 
+#define DESCRIBE_API(fname) val_t bltn_## fname(val_t*)
+#define DESCRIBE_VOID_API(fname) void bltn_## fname(val_t*)
+
+// character handling
+DESCRIBE_API(alphap);
+DESCRIBE_API(alnump);
+DESCRIBE_API(lowerp);
+DESCRIBE_API(upperp);
+DESCRIBE_API(digitp);
+DESCRIBE_API(xdigitp);
+DESCRIBE_API(cntrlp);
+DESCRIBE_API(graphp);
+DESCRIBE_API(spacep);
+DESCRIBE_API(blankp);
+DESCRIBE_API(printp);
+DESCRIBE_API(punctp);
+DESCRIBE_API(upper);
+DESCRIBE_API(lower);
+DESCRIBE_API(u8len);
+
+// system calls
+DESCRIBE_VOID_API(exit);
+DESCRIBE_API(osgetenv);
+
+// IO utilities
+DESCRIBE_API(peekc);
+DESCRIBE_API(putc);
+DESCRIBE_API(getc);
+DESCRIBE_API(gets);
+DESCRIBE_API(puts);
+DESCRIBE_API(open);
+DESCRIBE_API(close);
+DESCRIBE_API(eofp);
+
+
 /* builtin functions */
 // numeric functions
-val_t rsp_add(val_t,val_t);
-val_t rsp_sub(val_t,val_t);
-val_t rsp_mul(val_t,val_t);
-val_t rsp_div(val_t,val_t);
-val_t rsp_rem(val_t,val_t);
-val_t rsp_eql(val_t,val_t);
-val_t rsp_neql(val_t,val_t);
-val_t rsp_gt(val_t,val_t);
-val_t rsp_ge(val_t,val_t);
-val_t rsp_lt(val_t,val_t);
-val_t rsp_le(val_t,val_t);
-val_t rsp_bor(val_t,val_t);
-val_t rsp_bxor(val_t,val_t);
-val_t rsp_band(val_t,val_t);
-val_t rsp_lsh(val_t,val_t);
-val_t rsp_rsh(val_t,val_t);
-val_t rsp_bneg(val_t);
 
-// comparison
-val_t rsp_ord(val_t,val_t);
-val_t rsp_id(val_t,val_t);              // true if two objects are identical
-val_t rsp_eq(val_t,val_t);              // true if two objects represent the same data
-
-// general predicates/booleans
-val_t rsp_nilp(val_t);
-val_t rsp_nonep(val_t);
-val_t rsp_truep(val_t);
-val_t rsp_falsep(val_t);
-val_t rsp_eofp(val_t);
-val_t rsp_not(val_t);
-val_t rsp_isa(val_t,val_t);            // test whether the first argument's type equals the
-                                       // second argument
-
-// IO & character handling
-val_t rsp_open(val_t,val_t);
-val_t rsp_close(val_t,val_t);
-val_t rsp_read(val_t);
-val_t rsp_load(val_t);
-val_t rsp_prn(val_t,val_t);
-val_t rsp_getc(val_t);
-val_t rsp_putc(val_t,val_t);
-val_t rsp_gets(val_t,val_t);
-val_t rsp_puts(val_t,val_t);
-val_t rsp_isctype(val_t,val_t);
-val_t rsp_upper(val_t);
-val_t rsp_lower(val_t);
-
-// generic object API - these should be implemented as generic functions once generics
-// are implemented
-val_t    rsp_len(val_t);                // get the number of elements contained
-val_t    rsp_asscf(val_t,val_t);        // return the value of a named field
-val_t    rsp_assck(val_t,val_t);        // key-based search
-val_t    rsp_asscn(val_t,val_t);        // index-based search
-val_t    rsp_asscv(val_t,val_t);        // search for a value
-val_t    rsp_rplcf(val_t,val_t,val_t);  // replace the value of a named field
-val_t    rsp_rplck(val_t,val_t,val_t);  // change the value associated with a particular key
-val_t    rsp_rplcn(val_t,val_t,val_t);  // replace the nth element of a collection
-val_t    rsp_rplcv(val_t,val_t,val_t);  // replace the first occurence of a value
-val_t    rsp_conj(val_t,val_t);         // add a new element to a sequence
-val_t    rsp_join(val_t,val_t);         // merge two sequences
-val_t    rsp_seq(val_t);                // return a cons whose first element is 
-val_t    rsp_fst(val_t);                // get the first element of a sequence
-val_t    rsp_rst(val_t);                // return a sequence whose cdr will yield the next
-                                        // element of the sequence
 
 /* end capi.h */
 #endif

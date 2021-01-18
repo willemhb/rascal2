@@ -13,10 +13,9 @@
 
 /* the current object head layouts imply various sizing limits, which are defined here */
 
-const uint64_t MAX_ARRAY_ELEMENTS = (1ul << 60) - 1;
-const uint64_t MAX_TABLE_ELEMENTS = (1ul << 52) - 1;
+const uint64_t MAX_TABLE_ELEMENTS = (1ul << 59) - 1;
 const uint64_t MAX_OBJECT_BASESIZE = (1ul << 46) - 1;
-const uint64_t MAX_PROC_ARGCO = (1ul << 28) - 1;
+const uint64_t MAX_PROC_ARGCO = UINT_MAX;
 
 /*  structs to represent builtin object types */
 
@@ -50,12 +49,12 @@ struct bvec64_t {
 };
 
 struct node_t {
-  val_t  order    : 59; // the original insertion order
-  val_t  balance  :  3; // the balance factor
-  val_t  fieldcnt :  2;
+  val_t  order    : 59;  // the original insertion order
+  val_t  balance  :  3;  // the balance factor
+  val_t  fieldcnt :  2;  // the number of bindings
   node_t* left;
   node_t* right;
-  val_t _node_fields[1];
+  val_t _node_fields[1]; // the first is always the hashkey         
 };
 
 
@@ -92,7 +91,7 @@ struct table_t {
   OBJECT_HEAD;            // a flagged pointer to the object head
   node_t* records;        // a pointer to the elements holding the 
   val_t count;            // number of elements
-  val_t _table_fields[1]; // other fields (used by extension types)
+  val_t _table_fields[3]; // first is the location of reserved space, remainder used by namespaces and extension types
 };
 
 struct function_t {
@@ -132,9 +131,9 @@ struct type_t {
   /* function pointers */
 
   int   (*tp_val_size)(val_t);                          // called when the size can't be determined from flags alone
-  val_t (*tp_new)(val_t*,int);                          // the rascal callable constructor
+  val_t (*tp_new)(val_t*);                              // the rascal callable constructor
   int   (*tp_init)(val_t,val_t*,int);                   // the initializer
-  val_t (*tp_copy)(val_t);                              // garbage collector
+  val_t (*tp_copy)(type_t*,val_t);                      // garbage collector
   void  (*tp_prn)(val_t,FILE*);                         // used to print values
   char name[1];
 };
@@ -163,22 +162,12 @@ const float RAM_LOAD_FACTOR = 0.8;
 extern val_t HEAPSIZE, STACKSIZE;
 extern bool GROWHEAP;
 
-// registers holding rascal values
+// registers holding rascal values used by the VM
 extern val_t EXP, VALUE, ENVT, CONT, TEMPLATE;
-
-/* 
-   the stacks used by the virtual machine
-
-   EVAL - holds evaluated sub-expressions needed by the current procedure or expression
-   STACK - a more general stack used to save values that will be needed later
-
-*/
-
+// the main stack
 extern val_t *EVAL;
-
 // offset registers
 extern size_t SP, PC;
-
 // working registers
 extern val_t WRX[8];
 
@@ -209,9 +198,11 @@ const char* FORM_NAMES[] = { "setv", "def", "quote", "if", "fun", "macro", "do",
 
 
 const char* SPECIAL_VARIABLES[] = { "*env*", "*stdin*", "*stdout*", "*stderr*",
-                                    "nil", "none", "t" };
+                                    "*sys-argv*", "nil", "none", "t", "f", ":ok",
+                                  };
 
-// these are used to interface to C's IO and wctype facilities
+// these are used to interface to C's IO and character utilities; they're special keyword
+// symbols and can be passed to functions like open, close, etc.
 const char* IOWC_SYMBOLS[] = { "r",  "w", "a", "r+", "w+", "a+",
                                "alnum", "alpha", "blank", "cntrl",
 			       "digit", "graph", "lower", "print",
@@ -259,9 +250,11 @@ int ltag(val_t);
 
 #define UNSAFE_ACCESSOR(t,v,cnvt,f)  \
    _Generic((v),		     \
+	    unsigned char*:(t)(v),   \
            t:v,		             \
            val_t:cnvt((val_t)(v)))->f
 
+/* object API (functions are in obj.c) */
 #define ntag(v)              ((v) & 0xf)
 #define wtag(v)              ((v) & 0xff)
 #define addr(v)              ((v) & (~0xful))
@@ -294,9 +287,8 @@ int ltag(val_t);
     function_t*:v,		             \
     default:toobj_((val_t)(v)))->type & (0xf)))
 
-
 type_t* get_val_type(val_t);             // get the type object associated with the value
-int get_val_size(val_t);                 // get the size of an object
+int get_val_size(val_t);                 // get the size of an object in bytes
 int val_len(val_t);                      // generic length
 char* get_val_type_name(val_t);          // get the object type name
 c_num_t get_val_cnum(val_t);
@@ -324,26 +316,27 @@ c_num_t promote_cnum(val_t*,val_t*);
 // tag-based tests for builtin types
 #define hasltag(v,t)        (ltag(v) == (t))
 #define hasoflags(v,lt,ot)  ({ val_t __v__ = v ; hasltag(__v__,lt) && (flags_(__v__) & (ot)); })
-#define islist(v)       hasltag(v,LTAG_LIST)
-#define iscons(v)       hasltag(v,LTAG_CONS)
+#define islist(v)           hasltag(v,LTAG_LIST)
+#define iscons(v)           hasltag(v,LTAG_CONS)
+
 // special test for distinguishing objects that have an accessible field called 'car'
-#define hascar(v)       ({ val_t __v__ = v ; __v__ && ((__v__ & 0xf) <= LTAG_CONS) ; })
-#define isstr(v)        hasltag(v,LTAG_STR)
-#define iscfile(v)      hasltag(v,LTAG_CFILE)
-#define issym(v)        hasltag(v,LTAG_SYM)
-#define isnode(v)       hasltag(v,LTAG_NODE)
-#define isfvec(v)       hasltag(v,LTAG_FVEC)
-#define isdvec(v)       hasltag(v,LTAG_DVEC)
-#define iscode(v)       hasltag(v,LTAG_CODE)
-#define isobj(v)        hasltag(v,LTAG_OBJECT)
-#define istable(v)      hasltag(v,LTAG_TABLEOBJ)
-#define isfunction(v)   hasltag(v,LTAG_FUNCOBJ)
-#define istype(v)       hasltag(v,LTAG_METAOBJ)
-#define isint(v)        hasltag(v,LTAG_INT)
-#define isfloat(v)      hasltag(v,LTAG_FLOAT)
-#define ischar(v)       hasltag(v,LTAG_CHAR)
-#define isbool(v)       hasltag(v,LTAG_BOOL)
-#define isbuiltin(v)    hasltag(v,LTAG_BUILTIN)
+#define hascar(v)          ({ val_t __v__ = v ; __v__ && ((__v__ & 0xf) <= LTAG_CONS) ; })
+#define isstr(v)           hasltag(v,LTAG_STR)
+#define iscfile(v)         hasltag(v,LTAG_CFILE)
+#define issym(v)           hasltag(v,LTAG_SYM)
+#define isnode(v)          hasltag(v,LTAG_NODE)
+#define isfvec(v)          hasltag(v,LTAG_FVEC)
+#define isdvec(v)          hasltag(v,LTAG_DVEC)
+#define iscode(v)          hasltag(v,LTAG_CODE)
+#define isobj(v)           hasltag(v,LTAG_OBJECT)
+#define istable(v)         hasltag(v,LTAG_TABLEOBJ)
+#define isfunction(v)      hasltag(v,LTAG_FUNCOBJ)
+#define istype(v)          hasltag(v,LTAG_METAOBJ)
+#define isint(v)           hasltag(v,LTAG_INT)
+#define isfloat(v)         hasltag(v,LTAG_FLOAT)
+#define ischar(v)          hasltag(v,LTAG_CHAR)
+#define isbool(v)          hasltag(v,LTAG_BOOL)
+#define isbuiltin(v)       hasltag(v,LTAG_BUILTIN)
 
 // tag based tests for special VM data structures
 #define hastabflags(v,t)   hasoflags(v,LTAG_TABLEOBJ,t)
@@ -406,6 +399,7 @@ rsp_cfunc_t  _tobuiltin(val_t,const char*,int,const char*);
 
 // these macros interface with the functions above, passing the calling function's
 // debugging information
+
 #define tolist(v)      _tolist(v,__FILE__,__LINE__,__func__)
 #define tocons(v)      _tocons(v,__FILE__,__LINE__,__func__)
 #define tostr(v)       _tostr(v,__FILE__,__LINE__,__func__)
@@ -419,8 +413,8 @@ rsp_cfunc_t  _tobuiltin(val_t,const char*,int,const char*);
 #define totable(v)     _totable(v,__FILE__,__LINE__,__func__)
 #define tofunction(v)  _tofunction(v,__FILE__,__LINE__,__func__)
 #define totype(v)      _totype(v,__FILE__,__LINE__,__func__)
-#define toint(v)       _toint(v,__FILE__,__LINE__,__func__)
-#define tofloat(v)     _tofloat(v,__FILE__,__LINE__,__func__)
+#define toint(v)       _torint(v,__FILE__,__LINE__,__func__)
+#define tofloat(v)     _torfloat(v,__FILE__,__LINE__,__func__)
 #define tochar(v)      _tochar(v,__FILE__,__LINE__,__func__)
 #define tobool(v)      _tobool(v,__FILE__,__LINE__,__func__)
 #define tobuiltin(v)   _tobuiltin(v,__FILE__,__LINE__,__func__)
@@ -433,10 +427,12 @@ val_t update_fptr(val_t*);        // recursively update a forwarding pointer
 
 // memory management and bounds checking
 // allocation
-unsigned char* rsp_alloc(size_t);    // allocate an aligned block at least n bytes in size
-unsigned char* rsp_allocw(size_t);   // allocate n word-sized blocks (maintaining alignment)
-val_t          rsp_new(type_t*,val_t*,int);                     // root constructor
-unsigned char* rsp_copy(unsigned char*,unsigned char*,size_t);  // generic copier
+unsigned char* vm_alloc(size_t);                                  // allocate an aligned block at least n bytes in size
+unsigned char* vm_allocw(size_t);                                 // allocate n word-sized blocks (maintaining alignment)
+unsigned char* vm_alloco(type_t*,size_t,size_t,unsigned char*);
+unsigned char* vm_allocbltn(ltag_t,size_t,size_t,unsigned char*);
+val_t          vm_new(type_t*,val_t*,int);                        // root constructor
+val_t          vm_copy(type_t*,unsigned char*,unsigned char**,size_t);    // generic copier
 
 // gc
 void gc();
@@ -472,122 +468,140 @@ bool stack_overflow(val_t*, unsigned long, unsigned long);
 #define closure_(v)         UNSAFE_ACCESSOR(function_t*,v,tofunction_,closure)
 #define envt_(v)            UNSAFE_ACCESSOR(function_t*,v,tofunction_,envt)
 
-/* basic object apis */
-// lists & conses
-val_t mk_list(int);                     
-int   init_list(val_t,val_t*,int);
-void  prn_list(val_t,FILE*);
-val_t mk_cons();
-val_t vm_cons(val_t,val_t);
-int   init_cons(val_t,val_t*,int);
-void  prn_cons(val_t,FILE*);
+// the following functions allocate memory and return an untagged pointer of the appropriate type
+// each takes an additional unsigned char* argument, which is either NULL or a pointer to pre-allocated memory
+// (ignore if NULL); none of these functions perform initialization, except that if the the type has an explicit type
+// pointer the correct type is placed in the appropriate fields; additional allocators are supplied for VM-reserved structures
+// that apply the appropriate tags
+list_t* new_list(int);
+cons_t* new_cons();
+char*   new_str(int);
+sym_t*  new_sym(int,unsigned char**);
+node_t* new_node(int,unsigned char**);
+fvec_t* new_fvec(int);
+dvec_t* new_dvec(int);
+table_t* new_table(int,int);
+function_t* new_function();
 
+// the functions below are meant to take C values and return an appropriately tagged object; new space may or may not be allocated,
+// and (depending on low level needs) a variety of 
+// only types that might be created directly supply a 'mk' function.
+val_t mk_list(int);
+val_t mk_cons(val_t,val_t);
+val_t mk_str(const char*);
+val_t mk_cfile(FILE*);
+val_t mk_sym(const char*,int);
+val_t mk_fvec(int);                                  // element count
+val_t mk_dvec(int);                                  // element count
+val_t mk_bool(int);
+val_t mk_char(int);
+val_t mk_int(int);
+val_t mk_float(float);
+val_t mk_function(val_t,val_t,val_t,int);            // template, formals, captured envt, flags
+val_t mk_builtin(val_t(*)(val_t*,int),int,bool,int); // C func, argco, vargs, index
+val_t mk_table(int,int);                             // number of entries, flags
+val_t mk_envtframe(val_t,val_t,int);                 // envt, closure, # of bindings
+val_t mk_envt(val_t,int*);                           // list of names, address to leave vargs flag
+val_t mk_nmspc();
+
+// initialization functions - only functions with non-trivial initialization have initializers
+// functions whose initializers don't match the signature (val_t,val_t*,int) are not meant to have their initializers
+// called through the API
+int   init_list(val_t,val_t*,int);
+int   init_sym(sym_t*,const char*,hash64_t,int);
+int   init_str(char*,const char*);
+int   init_dvec(val_t,val_t*,int);
+int   init_fvec(val_t,val_t*,int);
+
+// gc tracing functions
+val_t copy_cons(type_t*,val_t);
+val_t copy_node(type_t*,val_t);
+val_t copy_fvec(type_t*,val_t);
+val_t copy_dvec(type_t*,val_t);
+val_t copy_function(type_t*,val_t);
+val_t copy_table(type_t*,val_t);
+
+// printing functions
+void  prn_list(val_t,FILE*);
+void  prn_cons(val_t,FILE*);
+void  prn_str(val_t,FILE*);
+void  prn_sym(val_t,FILE*);
+void  prn_fvec(val_t,FILE*);
+void  prn_dvec(val_t,FILE*);
+void  prn_int(val_t,FILE*);
+void  prn_float(val_t,FILE*);
+void  prn_char(val_t,FILE*);
+void  prn_bool(val_t,FILE*);
+void  prn_table(val_t,FILE*);
+
+// rascal constructors
+val_t rsp_cons(val_t*);
+val_t rsp_list(val_t*);
+val_t rsp_sym(val_t*);
+val_t rsp_str(val_t*);
+val_t rsp_iostream(val_t*);
+val_t rsp_int(val_t*);
+val_t rsp_float(val_t*);
+val_t rsp_char(val_t*);
+val_t rsp_bool(val_t*);
+val_t rsp_fvec(val_t*);
+val_t rsp_dvec(val_t*);
+val_t rsp_table(val_t*);
+
+// object accessors, mutators, and searching APIs (including node AVL implementation)
 val_t _car(val_t,const char*,int,const char*);
 val_t _cdr(val_t,const char*,int,const char*);
 
 #define car(v) _car(v,__FILE__,__LINE__,__func__)
 #define cdr(v) _cdr(v,__FILE__,__LINE__,__func__)
 
-// cfiles
-val_t mk_cfile(FILE*);
-
-// strings
-val_t mk_str(const char*);
-void  prn_str(val_t,FILE*);
-
-// symbols
-val_t mk_sym(char*,int);                                    // name, flags
-val_t new_sym(char*,size_t,hash64_t,int,unsigned char*);
-void  prn_sym(val_t,FILE*);
 hash64_t symhash(val_t);
 char*    symname(val_t);
 
-// AVL nodes API
-node_t* new_node(int,int,unsigned char*);
-val_t mk_node(int,int,unsigned char*);                        // number of extra fields
-node_t* node_search(node_t*,val_t);
-int node_insert(node_t**,node_t**,val_t,int,int,unsigned char*);
-int node_intern(node_t**,val_t*,char*,hash64_t,int,int);
-int balance_factor(node_t*);
+#define  right_heavy(n) (balance_(n) > 3)
+#define  left_heavy(n)  (balance_(n) < 3)
+#define  unbalanced(n)  ({ int __b__ = balance_(n) ; __b__ > 4 || __b__ < 2 ; })
 
-#define right_heavy(n) (balance_(n) > 3)
-#define left_heavy(n)  (balance_(n) < 3)
-#define unbalanced(n)  ({ int __b__ = balance_(n) ; __b__ > 4 || __b__ < 2 ; })
-
-int node_delete(node_t**,val_t);
-void balance_node(node_t**);
-node_t* rotate_ll(node_t*,node_t*);
-node_t* rotate_rr(node_t*,node_t*);
-node_t* rotate_lr(node_t*,node_t*);
-node_t* rotate_rl(node_t*,node_t*);
-
-// fixed vectors and dynamic vectors
-val_t mk_fvec(int);                       // element count
-int   init_fvec(val_t,val_t*,int);
-void  prn_fvec(val_t,FILE*);
-val_t mk_dvec(int);                       // element count
-int   init_dvec(val_t,val_t*,int);
-void prn_dvec(val_t,FILE*);
+node_t*  node_search(node_t*,val_t);
+int      node_insert(node_t**,node_t**,val_t,int,int,unsigned char*);
+int      node_intern(node_t**,val_t*,char*,hash64_t,int,int);
+int      balance_factor(node_t*);
+int      node_delete(node_t**,val_t);
+void     balance_node(node_t**);
+node_t*  rotate_ll(node_t*,node_t*);
+node_t*  rotate_rr(node_t*,node_t*);
+node_t*  rotate_lr(node_t*,node_t*);
+node_t*  rotate_rl(node_t*,node_t*);
 
 val_t*    _vec_elements(val_t,const char*,int,const char*);
 unsigned  _vec_allocated(val_t,const char*,int,const char*);
 unsigned  _vec_curr(val_t,const char*,int,const char*);
-val_t     vec_append(val_t,val_t);
 
 #define vec_elements(v)  _vec_elements(v,__FILE__,__LINE__,__func__)
 #define vec_allocated(v) _vec_allocated(v,__FILE__,__LINE__,__func__)
 #define vec_curr(v)      _vec_curr(v,__FILE__,__LINE__,__func__)
 
-// val_t mk_code(unsigned char*,int,int);    // code, code length, number of constants
-// int   init_code(val_t*,int);
-val_t mk_obj(type_t*);                       // create an object of the specified type
+val_t     vec_append(val_t,val_t);
 
-// table objects
-val_t mk_table(int,int);                     // number of entries, flags
-void prn_table(val_t,FILE*);
-int  nodesz(table_t*);
-int   init_table(val_t,val_t*,int);
+// table API
+int   nodesz(table_t*);
 val_t table_insert(val_t,val_t);
 val_t table_delete(val_t,val_t);
 val_t table_lookup(val_t,val_t);
 val_t table_update(val_t,val_t,val_t);
 val_t intern_string(val_t,char*,hash64_t,int); // return an interned symbol
 
-// function objects
-val_t mk_function(val_t,val_t,val_t,int); // template, formals, captured envt, flags
-
-// direct types
-// integers
-val_t mk_int(int);
-void prn_int(val_t,FILE*);
-
-// floating point numbers
-val_t mk_float(float);
-void prn_float(val_t,FILE*);
-
-// unicode characters
-val_t mk_char(int);
-void prn_char(val_t,FILE*);
-
-// booleans
-val_t mk_bool(int);
-void prn_bool(val_t,FILE*);
-
-// builtin functions
-val_t mk_builtin(val_t(*)(val_t*,int),int,bool,int); // C func, argco, vargs, index
-
-// vm constructors for special types
-val_t mk_envtframe(val_t,val_t,int);       // envt, closure, # of bindings
-val_t mk_envt(val_t,int*);                 // list of names, address to leave vargs flag
-val_t save_cnt(val_t,val_t*,int);
-val_t restore_cnt(val_t);
-
-// environment API
-int env_bind(val_t,val_t);                 // bind a value in the next free location in a frame
-int env_bindn(val_t,size_t);               // bind the first N arguments on EVAL
-val_t env_extend(val_t,val_t);
-val_t env_assign(val_t,val_t,val_t);
-val_t env_lookup(val_t,val_t);
+// environment API, function calling API, and evaluator
+int       check_argl(val_t,int*);
+int       env_bind(val_t,val_t,bool);                        // bind a value in the next free location in a frame
+int       env_bindn(val_t,size_t,bool);                      // bind the first N arguments on EVAL
+val_t     env_extend(val_t,val_t);
+val_t     env_assign(val_t,val_t,val_t);
+val_t     env_lookup(val_t,val_t);
+bool      check_argco(val_t,int);
+val_t     rsp_eval(val_t,val_t);
+val_t     rsp_apply(val_t,val_t);
+val_t     rsp_evlis(val_t,val_t);
 
 // object comparison
 int vm_ord(val_t,val_t);  // order two comparable values
@@ -599,11 +613,6 @@ val_t     vm_read_cons(FILE*);
 void      vm_print(val_t,FILE*);
 void      vm_print_val(val_t,FILE*);  // fallback printer
 val_t     vm_load(FILE*,val_t);
-
-// evaluator core (these are also builtin functions)
-val_t rsp_eval(val_t,val_t);
-val_t rsp_apply(val_t,val_t);
-val_t rsp_evlis(val_t,val_t);
 
 /* initialization */
 // memory
@@ -647,6 +656,10 @@ int fskipto(FILE*,wint_t);
 #define POP()       (EVAL[--SP])
 #define POPN(n)     (SP -= (n))
 #define SAVE(v)     ({ EVAL[SP++] = (v) ; &(EVAL[0]) ; })
+// used when a function saves values on the stack and wants to pop everything
+#define SAVESP      val_t __OSP__ = SP
+#define RESTORESP   SP = __OSP__
+#define BASE(n)     (&(EVAL[SP+(n)]))
 
 // basic error handling
 void rsp_savestate(rsp_ectx_t*);

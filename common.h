@@ -61,8 +61,9 @@ typedef struct table_t table_t;
 typedef struct function_t function_t;
 typedef struct type_t type_t;
 
-// type signature for builtin C functions - the first argument is an array of arguments and the second is the size of the array
-typedef val_t (*rsp_cfunc_t)(val_t*,int);
+// type signature for builtin C functions that take their arguments from the stack - the VM checks the argument count
+// before passing it to the function, so that's not needed
+typedef val_t (*rsp_cfunc_t)(val_t*);
 
 // this struct holds vm state for handling exceptions
 typedef struct _rsp_ectx_t rsp_ectx_t;
@@ -99,7 +100,7 @@ typedef enum {
 
 #define MAX_CORE_OBJECT_TYPES 16
 #define MAX_CORE_DIRECT_TYPES 16
-#define NUM_BUILTIN_FUNCTIONS 64
+#define NUM_BUILTIN_FUNCTIONS 59
 extern type_t* CORE_OBJECT_TYPES[MAX_CORE_OBJECT_TYPES];
 extern type_t* CORE_DIRECT_TYPES[MAX_CORE_DIRECT_TYPES];
 // these arrays store the callables and metadata for builtin functions
@@ -224,6 +225,7 @@ typedef enum {
   C_PTR_TO       =0b010,   // value is a pointer to the indicated type
   C_FILE_PTR     =0b011,   // special case - value is a C file pointer
   C_BLTN_PTR     =0b100,   // special case - value is a C function pointer to a builtin function
+  C_STR_PTR      =0b101,   // special case - value is a C string pointer
 } c_ptr_t;
 
 /* opcodes */
