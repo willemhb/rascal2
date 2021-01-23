@@ -3,164 +3,399 @@
 /* memory management and bounds checking */
 static size_t calc_mem_size(size_t nbytes) {
   size_t basesz = max(nbytes, 16u);
-  while (basesz % 16) basesz++;
+  while (basesz % 16)
+    basesz++;
 
   return basesz;
 }
 
-unsigned char* rsp_alloc(size_t nbytes) {
-  // maintain padding and alignment
-  size_t alloc_size = calc_mem_size(nbytes);
-  if (heap_limit(alloc_size)) gc();
-
-  unsigned char* out = FREE;
-  FREE += alloc_size;
-
-  return out;
-}
-
-unsigned char* rsp_allocw(size_t nwords) {
-  size_t alloc_size = calc_mem_size(8 * nwords);
-  if (heap_limit(alloc_size)) gc();
-
-  unsigned char* out = FREE;
-  FREE += alloc_size;
-
-  return out;
-}
-
-unsigned char* rsp_alloco(type_t* to, size_t extra, size_t n)
+bool isallocated(val_t v)
 {
-  size_t each = calc_mem_size(to->val_base_size + extra);
-  size_t total = each * n;
-  unsigned char* out = rsp_alloc(total);
+  ntag_t t = ntag(v);
+  switch (t)
+    {
+    case NTAG_DIRECT: case NTAG_CPRIM: case NTAG_IOSTRM:
+      return false;
+    case NTAG_SYM:
+      return !sm_interned(v);
+    case NTAG_TABLE:
+      return !tb_global(v);
+    case NTAG_OBJECT:
+      return otype_(v) != TYPE_METAOBJ;
+    default:
+      return true;
+    }
+}
+
+inline bool gc_check(uint64_t n)
+{
+  return (FREE + n) >= (FROMSPACE + (HEAPSIZE * 8));
+}
+
+uchr8_t* vm_cmalloc(uint64_t nbytes)
+{
+  uchr8_t* out = malloc(nbytes);
+  if (!out)
+    {
+      fprintf(stdout,"[%s:%d:%s] Exiting due to machine allocation failure.\n",__FILE__,__LINE__,__func__);
+      exit(EXIT_FAILURE);
+    }
+
+  memset(out,0,nbytes);
   return out;
 }
 
-val_t rsp_new(type_t* to, val_t* args, int argc) {
-  rsp_cfunc_t afnc = to->tp_new;
+int32_t vm_cfree(uchr8_t* m)
+{
+  free(m);
+  return 1;
+}
 
-  if (afnc == NULL) rsp_raise(TYPE_ERR);
+uchr8_t* vm_crealloc(uchr8_t** m, uint64_t size, bool scrub)
+{
+  uchr8_t* new = realloc(*m,size);
+  if (!new)
+    {
+      fprintf(stdout,"[%s:%d:%s]: Exiting due to machine allocation failure.\n", __FILE__, __LINE__, __func__ ); 
+      exit(EXIT_FAILURE);
+    }
 
-  val_t new = afnc(args,argc);
-
-  if (to->tp_init != NULL) to->tp_init(new,args,argc);
-
+  if (scrub) memset(new,0,size);
+  *m = new;
   return new;
 }
 
-val_t rsp_copy(type_t* tp, unsigned char* frm, unsigned char** to, size_t nbytes) {
-  memcpy(frm,*to,nbytes);
-  size_t padded_size = calc_mem_size(nbytes);
-  unsigned char* new_head = *to;
-  val_t out = tag_p(new_head,tp->val_ltag);
-  *to += padded_size;
-  // install the forwarding pointer
-  car_(frm) = R_FPTR;
-  cdr_(frm) = tag_p(new_head,tp->val_ltag);
+uchr8_t* vm_alloc(size_t bs, size_t extra)
+{
+  size_t alloc_size = calc_mem_size(bs + extra);
+
+  if (gc_check(alloc_size))
+    gc_run();
+  
+  uchr8_t* out = FREE;
+  FREE += alloc_size;
   return out;
 }
 
-/* trace the global registers, stack, and symbol table */ 
-void gc() {
-  if (GROWHEAP) {
-    HEAPSIZE *= 2;
-    TOSPACE = realloc(TOSPACE, HEAPSIZE);
-  }
+size_t vm_allocsz_str(type_t* to, size_t argc, val_t* args)
+{
+  val_t* base = BASE(args,argc);
+  chr8_t* s = ecall(tostr,*base);
+  return strsz(s);
+}
 
-  // reassign the head of the FREE area to point to the tospace
-  FREE = TOSPACE;
+size_t vm_allocsz_bytes(type_t* to, size_t argc, val_t* args)
+{
+    val_t* base = BASE(args,argc);
+    uint64_t n = ecall(toint,*base);
+    return n;
+}
 
-  // trace the global symbol table and the top level environment
-  gc_trace(&R_SYMTAB);
-  gc_trace(&R_TOPLEVEL);
-
-  // trace the EVAL stack
-  for (size_t i = 0; i < SP; i++) gc_trace(EVAL + i);
-
-  // trace all the registers
-  gc_trace(&VALUE);
-  gc_trace(&ENVT);
-  gc_trace(&CONT);
-  gc_trace(&TEMPLATE);
-
-  // swap the fromspace & the tospace
-  unsigned char* TMP = FROMSPACE;
-  FROMSPACE = TOSPACE;
-  TOSPACE = TMP;
-  GROWHEAP = (FREE - FROMSPACE) > (HEAPSIZE * RAM_LOAD_FACTOR);
+size_t vm_allocsz_copies(type_t* to, size_t argc, val_t* args)
+{
   
+}
+
+// entry point for non-builtin constructors and constructor calls that couldn't be resolved at compile time
+val_t rsp_new(type_t* to, size_t argc, val_t* args)
+{
+  if (to->tp_builtin_p)
+    {
+      cprim_t* tnw = to->tp_new;
+      if (tnw->vargs)
+	return tnw->callable.varg_fun(argc,args);
+      else
+	return tnw->callable.farg_fun(args);
+    }
+
+  else
+    {
+      size_t allcsz = to->tp_alloc_sz(to,argc,args);
+      uchr8_t* new = vm_alloc(to->tp_base,allcsz);
+
+      if (to->tp_vtag == VTAG_OBJECT)
+	  ((val_t*)new)[0] = ((val_t)(to)) | OTAG_OBJECT;
+
+      val_t* bs = BASE(args,argc);
+      memcpy(new + 8,(uchr8_t*)bs,(to->tp_fields->count)*8);
+
+      if (to->tp_init)
+	to->tp_init(new,argc,args);
+
+      return (val_t)new | to->tp_vtag;
+    }
+}
+
+  uchr8_t* vm_allocs(type_t* to, size_t n, val_t* args)
+{
+  chr8_t* s = tostr(args[0],__FILE__,__LINE__,__func__);
+  return vm_alloc(tp_base(to) + strsz(s));
+}
+
+val_t  vm_inits(type_t* to, val_t new, val_t* args)
+{
+  chr8_t* strf = (chr8_t*)(new + tp_base(to));
+  chr8_t* stra = ptr(chr8_t*,args[0]);
+  strcpy(strf,stra);
+  return new;
+}
+
+uchr8_t* vm_allocb(type_t* to, size_t n, val_t* args)
+{
+  size_t s = uval(args[1]);
+  return vm_alloc(tp_base(to) + s);
+}
+
+val_t  vm_initb(type_t* to, val_t new, val_t* args)
+{
+  uint64_t hdsz = tp_base(to);
+  val_t* sz_field = (val_t*)(new + hdsz);
+  uchr8_t* bts_field = (uchr8_t*)(new + hdsz + 8);
+  *sz_field = uval(args[1]);
+  uchr8_t* bts = ptr(uchr8_t*,args[0]);
+  memcpy(bts_field,bts,*sz_field);
+  return new;
+}
+
+uchr8_t* vm_allocv(type_t* to, size_t n, val_t* args)
+{
+  size_t extra = uval(args[0]);
+  return vm_alloc(tp_base(to) + ((n + extra) * 8));
+}
+
+
+val_t vm_initv(type_t* to,val_t new,size_t n, val_t* args)
+{
+  vm_inito(to,new,args);
+  size_t hdsz = to->tp_ndsz + to->tp_tagged;
+  args += hdsz;
+  n -= hdsz;
+  vec_t* v = (vec_t*)new;
+  val_t* varr = vec_values(v);
+  size_t i;
+  for (i=0;i < n;i++)
+    {
+      varr[i] = args[i];
+    }
+  return new;
+}
+
+
+uchr8_t* vm_allocn(type_t* to, size_t n, val_t* args)
+{
+  return vm_alloc(tp_base(to) * n);
+}
+
+uchr8_t* vm_allocp(type_t* to, size_t n, val_t* args)
+{
+  size_t aligned_base = calc_mem_size(tp_base(to));
+  return vm_alloc(aligned_base + (to->tp_ndsz * n));
+}
+
+// reallocate 
+val_t* vm_realloc(val_t* sz, size_t curr, size_t new)
+{
+  uint64_t oldbts = curr * 8;
+  uint64_t newbts = calc_mem_size(new * 8);
+  val_t* out;
+
+  if (gc_check(new))
+    {
+      if (GROWHEAP)
+	{
+	  gc_resize();
+	  GROWHEAP = false;
+	}
+      
+      out = (val_t*)TOSPACE;
+      TOFFSET = TOSPACE + newbts;
+      memset(TOSPACE,0,newbts);
+      memcpy(TOSPACE,(uchr8_t*)sz,oldbts);
+      *sz = R_FPTR;
+      sz[1] = (val_t)out;
+      ((val_t*)TOSPACE)[curr+1] = R_FPTR; // mark the end of the new elements
+      gc_run();
+    }
+
+  else
+    {
+      out = (val_t*)FREE;
+      FREE += newbts;
+      memcpy(out,(uchr8_t*)sz,oldbts);
+      *sz = R_FPTR;
+      sz[1] = (val_t)out;
+    }
+
+  return out;
+}
+
+void gc_resize()
+{
+  HEAPSIZE *= 2;
+  vm_crealloc(&TOSPACE,HEAPSIZE,true);
   return;
 }
 
-val_t gc_trace(val_t* v) {
-  val_t vv = *v;
-  val_t newl;
-  ltag_t t = ltag(vv);
+void gc_run() {
+  if (GROWHEAP) gc_resize();
 
-  // don't collect objects that live outside the heap or direct data
-  if (!vv || t == LTAG_CFILE || t == LTAG_METAOBJ || t > 0xf) return vv;
+  // reassign the head of the FREE area to point to the tospace
+  FREE = TOFFSET;
 
-  if (isfptr(car_(vv)))
+  if (TOFFSET != TOSPACE)
     {
-      newl = safe_ptr(vv);
-      *v = newl;
-      return newl;
+      // if a block was preallocated, trace its bindings
+      val_t* TARR = (val_t*)TOSPACE;
+      size_t numwords = (val_t*)TOFFSET - TARR;
+      for (size_t i = 0; i < numwords && TARR[i] != R_FPTR; i++)
+	{
+	  TARR[i] = gc_trace(TARR[i],LTAG_NONE);
+	}
     }
 
-  else if (isstr(vv))
-    {
-      char* orig = tostr_(vv);
-      *v = rsp_copy(CORE_OBJECT_TYPES[LTAG_STR],(unsigned char*)orig,&FREE,strsz(orig));
-      return *v;
-    }
+  // trace the top level environment
+  R_MAIN = gc_trace(R_MAIN,LTAG_NONE);
 
-  else if (issym(vv))
-    {
-      sym_t* orig = tosym_(vv);
-      *v = rsp_copy(CORE_OBJECT_TYPES[LTAG_SYM],(unsigned char*)orig,&FREE,8+strsz(symname_(orig)));
-      return *v;
-    }
+  // trace EVAL, DUMP, and the main registers
+  for (size_t i = 0; i < SP; i++) EVAL[i] = gc_trace(EVAL[i],LTAG_NONE);
+  for (size_t i = 0; i < DP; i++) DUMP[i] = gc_trace(DUMP[i],LTAG_NONE);
+  for (size_t i = 0; i < 4; i++) REGISTERS[i] = gc_trace(REGISTERS[i],LTAG_NONE);
 
-  // get the type object
-  type_t* to = get_val_type(vv);
-  // move the object to the new heap
-  vv = to->tp_copy(to,vv);
-  // apply the correct ltag
-  *v = vv;
-  return vv;
+  // swap the fromspace & the tospace
+  uchr8_t* TMPHEAP = FROMSPACE;
+  FROMSPACE = TOSPACE;
+  TOSPACE = TMPHEAP;
+  TOFFSET = TOSPACE;
+  GROWHEAP = (FREE - FROMSPACE) > (HEAPSIZE * RAM_LOAD_FACTOR);
+
+  return;
 }
 
+uchr8_t* gc_reserve(val_t v)
+{
+  uchr8_t* out = FREE;
+  size_t osz = calc_mem_size(val_size(v));
+  FREE += osz;
+  return out;
+}
+
+
+val_t gc_copy(type_t* tp, val_t v, uchr8_t* to)
+{
+  size_t sz = tp->tp_size ? tp->tp_size(v) : tp_base(tp);
+  size_t asz = calc_mem_size(sz);
+  uchr8_t* frm = ptr(uchr8_t*,v);
+  memcpy(frm,to,asz);
+  val_t out = (val_t)frm;
+  // install the forwarding pointer
+  car_(frm) = R_FPTR;
+  cdr_(frm) = tag_p(out,tp->tp_ltag);
+  return out;
+}
+
+val_t gc_trace(val_t v, ltag_t t)
+{
+  if (!isallocated(v) || in_heap(v,(val_t*)TOSPACE,HEAPSIZE)) return v;
+  else if (isfptr(car_(v)))
+    {
+      return trace_fp(v);
+    }
+
+  else
+    {
+      bool return_tagged;
+      if (t == LTAG_NONE)
+	{
+	  return_tagged = true;
+	}
+      else
+	{
+	  return_tagged = false;
+	  t = ntag(v);
+	  v = v | t;
+	}
+
+      uchr8_t* new_spc = gc_reserve(v);
+      val_t new_val, * varr; size_t elcnt;
+      type_t* to = val_type(v); uint64_t* offsets;
+
+      switch (t)
+	{
+	 case LTAG_OBJECT:
+	   varr = ptr(val_t*,v); offsets = to->tp_foffsets;
+	   for (size_t i = 0; i < to->tp_nfields; i++)
+	     {
+	       varr[offsets[i]] = gc_trace(varr[offsets[i]],LTAG_NONE);
+	     }
+	   break;
+	 case LTAG_NODE:	   
+	   nd_left_(v) = (node_t*)gc_trace((val_t)nd_left_(v),LTAG_NODE);
+	   nd_right_(v) = (node_t*)gc_trace((val_t)nd_right_(v),LTAG_NODE);
+	   nd_data_(v) = gc_trace(nd_data_(v),LTAG_NONE);
+	   break;
+	 case LTAG_CONS:
+	 case LTAG_LIST:
+	   car_(v) = gc_trace(car_(v),LTAG_NONE);
+	   cdr_(v) = gc_trace(cdr_(v),LTAG_NONE);
+	   break;
+	 case LTAG_TABLE:
+	   tb_records_(v) = (node_t*)gc_trace((val_t)tb_records_(v),LTAG_NODE);
+	   break;
+	 case LTAG_VEC:
+	   varr = vec_values_(v); elcnt = vec_datasz_(v);
+	   for (size_t i = 0;i < elcnt; i++)
+	     {
+	       varr[i] = gc_trace(varr[i],LTAG_NONE);
+	     }
+	   break;
+	 case LTAG_METHOD:
+	   meth_code_(v) = (vec_t*)gc_trace((val_t)meth_code_(v),LTAG_VEC);
+	   meth_names_(v) = (table_t*)gc_trace((val_t)meth_names_(v),LTAG_TABLE);
+	   meth_envt_(v) = (vec_t*)gc_trace((val_t)meth_envt_(v),LTAG_VEC);
+	   break;
+	default:
+	  break;
+	}
+
+      new_val = gc_copy(to,v,new_spc);
+      return new_val | (t * return_tagged);
+    }
+}
+
+
+inline val_t* get_vec_values(vec_t* v)   { return vec_localvals(v) ? &(vec_data(v)) : (val_t*)(vec_data(v)) ; }
+inline val_t* get_vec_elements(vec_t* v) { return get_vec_values(v) + vec_dynamic(v) + vec_initsz(v) ; }
+
+
+/*
 // simple limit checks
-bool in_heap(val_t v, val_t* base, val_t* curr) {
-  uptr_t a = addr(v), b = (uptr_t)base, c = (uptr_t)curr;
+bool in_heap(val_t v, val_t* base, uint64_t heapsz)
+{
+  uptr_t a = addr(v), b = (uptr_t)base, c = (uptr_t)(base + heapsz);
   return a >= b && a <= c;
 }
 
-
-bool heap_limit(unsigned long addition) {
-  return (FREE + addition) >= (FROMSPACE + HEAPSIZE);
+// specialized accessors
+inline val_t get_nd_key(node_t* n)
+{
+  val_t d = nd_data(n);
+  return iscons(d) ? ptr(val_t*,d)[0] : d;
 }
 
-bool stack_overflow(val_t* base, unsigned long sptr, unsigned long addition) {
-  return (base + STACKSIZE) < (base + sptr + addition);
+inline val_t get_nd_binding(node_t* n)
+{
+  val_t d = nd_data(n);
+  return iscons(d) ? ptr(val_t*,d)[1] : d;
 }
-
-/* 
-   object apis 
-
-   allocators
-
- */
 
 inline list_t* new_list(int cnt) { return cnt == 0 ? NULL : (list_t*)rsp_allocw(cnt*2) ; }
 inline cons_t* new_cons() { return (cons_t*)rsp_allocw(2); }
 inline char* new_str(int ssz) { return (char*)rsp_alloc(ssz) ; }
 
-sym_t* new_sym(int ssz, unsigned char** mem)
+sym_t* new_sym(int ssz, uchr8_t** mem)
 {
   
-  unsigned char* m;
+  uchr8_t* m;
   if (mem)
     {
       m = *mem;
@@ -175,9 +410,9 @@ sym_t* new_sym(int ssz, unsigned char** mem)
 }
 
 
-inline node_t* new_node(int nb, unsigned char** mem)
+inline node_t* new_node(int nb, uchr8_t** mem)
 {
-  unsigned char* m;
+  uchr8_t* m;
   if (mem)
     {
       m = rsp_allocw(4+nb);
@@ -221,13 +456,11 @@ inline function_t* new_function()
   return out;
 }
 
-/* initializers */
-
 int init_table(val_t t, val_t* args, int argc)
 {
   table_t* tab = totable_(t);
 
-  unsigned char* free = (unsigned char*)tab + 32; // reserved space
+  uchr8_t* free = (uchr8_t*)tab + 32; // reserved space
   node_t* r = records_(tab), *new_n;
   int o = 0, rsz = tab->type & 0xf;
   tab->type = tab->type & (~0xful);
@@ -281,7 +514,6 @@ inline int init_str(char* sv, const char* sn)
   return 0;
 }
 
-/* low level constructors */
 inline val_t mk_list(int cnt) { return cnt == 0 ? R_NIL : tag_p(rsp_allocw(cnt * 2), LTAG_LIST); }
 
 inline val_t mk_cons(val_t ca, val_t cd) {
@@ -351,7 +583,7 @@ val_t mk_envt(val_t argl, int* flags)
   type_(names) = ((val_t)CORE_OBJECT_TYPES[LTAG_TABLEOBJ]) | TABLEFLAG_ENVT;
   count_(names) = 0;
   records_(names) = NULL;
-  unsigned char* free = (unsigned char*)(names) + 32;
+  uchr8_t* free = (uchr8_t*)(names) + 32;
 
   list_t* argls = tolist_(POP());
   node_t** n = &records_(names);
@@ -442,141 +674,13 @@ inline val_t mk_int(int i) { return tag_v(i,LTAG_INT); }
 
 inline val_t mk_float(float f) { return tag_v(f,LTAG_FLOAT);}
 
-/* printers */
 
-void prn_list(val_t ls, FILE* f) {
-  fputwc('(',f);
-  list_t* lsx = tolist_(ls);
-  while (lsx) {
-    vm_print(first_(lsx),f);
-
-    if (rest_(lsx)) fputwc(' ',f);
-
-    lsx = rest_(lsx);
-  }
-
-  fputwc(')',f);
-  return;
-}
-
-void prn_cons(val_t c, FILE* f)
-{
-  fputwc('(',f);
-  vm_print(car_(c),f);
-  fputs(" . ",f);
-  vm_print(cdr_(c),f);
-  fputwc(')',f);
-  return;
-}
-
-void prn_str(val_t s, FILE* f)
-{
-  fputwc('"',f);
-  fputs(tostr_(s),f);
-  fputwc('"',f);
-}
-
-
-void prn_sym(val_t s, FILE* f) {
-  fputs(symname_(s),f);
-  return;
-}
-
-
-static void tbl_prn_traverse(node_t* n, FILE* f)
-{
-  if (!n) return;
-
-  vm_print(hashkey_(n),f);
-  if (fieldcnt_(n))
-    {
-      fputs(" => ",f);
-      vm_print(bindings_(n)[0],f);
-    }
-
-  if (left_(n))
-    {
-      fputwc(' ',f);
-      tbl_prn_traverse(left_(n),f);
-    }
-
-  if (n->right)
-    {
-      fputwc(' ',f);
-      tbl_prn_traverse(left_(n),f);
-    }
-
-  return;
-}
-
-void prn_table(val_t t, FILE* f)
-{
-  fputwc('{',f);
-  tbl_prn_traverse(records_(t),f);
-  fputwc('}',f);
-}
-
-void prn_bool(val_t b, FILE* f)
-{
-  if (b == R_TRUE) fputwc('t',f);
-  else fputwc('f',f);
-
-  return;
-}
-
-void prn_char(val_t c, FILE* f)
-{
-  fputwc('\\',f);
-  fputwc(tochar_(c),f);
-  return;
-}
-
-void prn_fvec(val_t v, FILE* f)
-{
-  fputs("#f[",f);
-  val_t* el = tofvec_(v)->elements;
-  int elcnt = tofvec_(v)->allocated;
-
-  for (int i = 0; i < elcnt; i++) {
-    vm_print(el[i],f);
-    if (elcnt - i > 1) fputwc(' ', f);
-  }
-
-  fputwc(']',f);
-  return;
-}
-
-
-void prn_dvec(val_t v, FILE* f)
-{
-  fputs("#d[",f);
-  val_t* el = dvec_elements_(v);
-  int elcnt = dvec_allocated_(v);
-
-  for (int i = 0; i < elcnt; i++)
-    {
-      vm_print(el[i],f);
-      if (elcnt - i > 1) fputwc(' ', f);
-    }
-
-  fputwc(']',f);
-  return;
-}
-
-void prn_int(val_t i, FILE* f)
-{
-  fprintf(f,"%d",toint_(i));
-  return;
-}
-
-
-/* copiers */
 val_t copy_cons(type_t* to,val_t c)
 {
   cons_t* co = tocons(c);
   gc_trace(&car_(co));
   gc_trace(&cdr_(co));
-  return rsp_copy(to,(unsigned char*)co,&TOSPACE,16);
+  return rsp_copy(to,(uchr8_t*)co,&TOSPACE,16);
 }
 
 
@@ -600,27 +704,27 @@ val_t copy_node(type_t* to, val_t c)
 	  bindings_(c)[i] = gc_trace(&bindings_(c)[i]);
 	}
     }
-  return rsp_copy(to,(unsigned char*)addr(c),&FREE,8*(4+fieldcnt_(c)));
+  return rsp_copy(to,(uchr8_t*)addr(c),&FREE,8*(4+fieldcnt_(c)));
 }
 
 val_t copy_fvec(type_t* to, val_t fv)
 {
   fvec_t* fvo = tofvec_(fv);
-  val_t allc = fvec_allocated_(fvo);
-  val_t* elements = fvec_elements_(fvo);
+  val_t allc = fv_alloc_(fvo);
+  val_t* elements = fv_values_(fvo);
 
   for (size_t i = 0; i < allc;i++)
     {
       gc_trace(elements+i);
     }
-  return rsp_copy(to,(unsigned char*)fvo,&FREE,8*(2+allc));
+  return rsp_copy(to,(uchr8_t*)fvo,&FREE,8*(2+allc));
 }
 
 val_t copy_dvec(type_t* to, val_t dv)
 {
   dvec_t* dvo = todvec_(dv);
-  gc_trace(dvec_elements_(dvo));
-  return rsp_copy(to,(unsigned char*)dvo,&FREE,16);
+  gc_trace(dv_values_(dvo));
+  return rsp_copy(to,(uchr8_t*)dvo,&FREE,16);
 }
 
 val_t copy_function(type_t* to, val_t fnc)
@@ -629,14 +733,14 @@ val_t copy_function(type_t* to, val_t fnc)
   gc_trace(&template_(fnco));
   gc_trace(&envt_(fnco));
   gc_trace(&closure_(fnco));
-  return rsp_copy(to,(unsigned char*)fnco,&FREE,48);
+  return rsp_copy(to,(uchr8_t*)fnco,&FREE,48);
 }
 
-/* access, search, and mutation API functions */
+
 val_t _car(val_t c, const char* fl, int ln, const char* fnm) {
   if (hascar(c)) return car_(c);
   else {
-    _rsp_perror(fl,ln,fnm,TYPE_ERR,"Expected cons or list, got %s",get_val_type_name(c));
+    _rsp_perror(fl,ln,fnm,TYPE_ERR,"Expected cons or list, got %s",val_type_name(c));
     rsp_raise(TYPE_ERR);
   }
   return R_NONE;
@@ -646,7 +750,7 @@ val_t _cdr(val_t c, const char* fl, int ln, const char* fnm) {
   if (hascar(c)) return cdr_(c);
   else
     {
-    _rsp_perror(fl,ln,fnm,TYPE_ERR,"Expected cons or list, got %s",get_val_type_name(c));
+    _rsp_perror(fl,ln,fnm,TYPE_ERR,"Expected cons or list, got %s",val_type_name(c));
     rsp_raise(TYPE_ERR);
     }
 
@@ -676,7 +780,7 @@ node_t* node_search(node_t* n, val_t x)
   return n;
 }
 
-int node_insert(node_t** rt, node_t** new, val_t hk, int order, int nsz, unsigned char* m)
+int node_insert(node_t** rt, node_t** new, val_t hk, int order, int nsz, uchr8_t* m)
 {
   if (!(*rt)) // empty tree
     {
@@ -718,11 +822,11 @@ int node_intern(node_t** rt, val_t* sr, char* sn, hash64_t h, int fl, int order)
   if (!(*rt)) // empty tree
     {
       size_t sz = strsz(sn);
-      unsigned char* m = rsp_alloc(32 + 8 + sz);
+      uchr8_t* m = rsp_alloc(32 + 8 + sz);
       node_t* new_nd = new_node(0,&m);
       sym_t* new_sm = new_sym(sz,&m);
-      *sr = new_sm;
-      hashkey_(new_nd) = new_sm;
+      *sr = tag_p(new_sm,LTAG_SYM);
+      hashkey_(new_nd) = *sr;
       *rt = new_nd;
       return 1;
     }
@@ -937,7 +1041,7 @@ val_t* _vec_elements(val_t v,const char* fl, int ln, const char* fnc) {
   case LTAG_DVEC:
     return dvec_elements_(v);
   default:
-    _rsp_perror(fl,ln,fnc,TYPE_ERR,"Expected vector type, got %s",get_val_type_name(v));
+    _rsp_perror(fl,ln,fnc,TYPE_ERR,"Expected vector type, got %s",val_type_name(v));
     rsp_raise(TYPE_ERR);
     return (val_t*)0;
   }
@@ -950,7 +1054,7 @@ unsigned _vec_allocated(val_t v, const char* fl, int ln, const char* fnc) {
   case LTAG_DVEC:
     return dvec_allocated_(v);
   default:
-    _rsp_perror(fl,ln,fnc,TYPE_ERR,"Expected vector type, got %s",get_val_type_name(v));
+    _rsp_perror(fl,ln,fnc,TYPE_ERR,"Expected vector type, got %s",val_type_name(v));
     rsp_raise(TYPE_ERR);
     return 0u;
   }
@@ -964,7 +1068,7 @@ unsigned _vec_curr(val_t v, const char* fl, int ln, const char* fnc) {
   case LTAG_DVEC:
     return dvec_curr_(v);
   default:
-    _rsp_perror(fl,ln,fnc,TYPE_ERR,"Expected vector type, got %s",get_val_type_name(v));
+    _rsp_perror(fl,ln,fnc,TYPE_ERR,"Expected vector type, got %s",val_type_name(v));
     rsp_raise(TYPE_ERR);
     return 0u;
   }
@@ -1050,7 +1154,7 @@ val_t env_next(val_t e)
     }
   else
     {
-      rsp_perror(TYPE_ERR,"non-environtment of type %s has no closure.",get_val_type_name(e));
+      rsp_perror(TYPE_ERR,"non-environtment of type %s has no closure.",val_type_name(e));
       rsp_raise(TYPE_ERR);
       return 0;
     }
@@ -1060,7 +1164,7 @@ val_t env_extend(val_t nm, val_t e)
 {
   if (!issym(nm))
     {
-      rsp_perror(TYPE_ERR,"Expected type sym, got %s",get_val_type_name(nm));
+      rsp_perror(TYPE_ERR,"Expected type sym, got %s",val_type_name(nm));
       rsp_raise(TYPE_ERR);
     }
 
@@ -1077,7 +1181,7 @@ val_t env_extend(val_t nm, val_t e)
 
   else
     {
-      rsp_perror(ENVT_ERR,"Invalid envt of type %s.",get_val_type_name(e));
+      rsp_perror(ENVT_ERR,"Invalid envt of type %s.",val_type_name(e));
       rsp_raise(ENVT_ERR);
       return 0;
     }
@@ -1087,7 +1191,7 @@ val_t env_assign(val_t nm, val_t e, val_t b)
 {
   if (!issym(nm))
     {
-      rsp_perror(ENVT_ERR,"Expected type sym, got %s.",get_val_type_name(nm));
+      rsp_perror(ENVT_ERR,"Expected type sym, got %s.",val_type_name(nm));
       rsp_raise(ENVT_ERR);
     }
 
@@ -1133,7 +1237,7 @@ val_t env_assign(val_t nm, val_t e, val_t b)
 
   else
     {
-      rsp_perror(TYPE_ERR,"Non environment of type %s.",get_val_type_name(e));
+      rsp_perror(TYPE_ERR,"Non environment of type %s.",val_type_name(e));
       rsp_raise(TYPE_ERR);
       return 0;
     }
@@ -1143,7 +1247,7 @@ val_t env_lookup(val_t nm, val_t e)
 {
   if (!issym(nm))
     {
-      rsp_perror(ENVT_ERR,"Expected type sym, got %s.",get_val_type_name(nm));
+      rsp_perror(ENVT_ERR,"Expected type sym, got %s.",val_type_name(nm));
       rsp_raise(ENVT_ERR);
     }
 
@@ -1187,50 +1291,14 @@ val_t env_lookup(val_t nm, val_t e)
 
   else
     {
-      rsp_perror(TYPE_ERR,"Non environment of type %s.",get_val_type_name(e));
+      rsp_perror(TYPE_ERR,"Non environment of type %s.",val_type_name(e));
       rsp_raise(TYPE_ERR);
       return 0;
     }
 }
 
-/*
-    OBJECT_HEAD;
-  val_t parent;                          // pointer to the parent type
-  
-  val_t val_base_size     : 47;         // the minimum size for objects of this type
-  val_t val_fixed_size    :  1;
-  val_t val_cnum          :  8;         // the C numeric type of the value representation
-  val_t val_cptr          :  3;         // the C pointer type of the value representation
-  val_t tp_atomic         :  1;        // legal for use in a plain dict
-  val_t val_ltag          :  4;
 
-  table_t* tp_readable;                               // a dict mapping rascal-accessible fields to offsets
-  table_t* tp_writeable;                              // a dict mapping rascal-writeable fields to offsets
-  int   (*tp_val_size)(val_t);                          // called when the size can't be determined from flags alone
-  val_t (*tp_new)(val_t*,int);                          // the rascal callable constructor
-  int   (*tp_init)(val_t,val_t*,int);                   // the initializer
-  val_t (*tp_copy)(type_t*,val_t);                      // garbage collector
-  void  (*tp_prn)(val_t,FILE*);                         // used to print values
-
-  C_UINT8   =0b000010,
-  C_INT8    =0b000001,
-  C_UINT16  =0b000110,
-  C_INT16   =0b000011,
-  C_UINT32  =0b001110,
-  C_INT32   =0b000111,
-  C_INT64   =0b001111,
-  C_FLOAT32 =0b100111,
-  C_FLOAT64 =0b101111,
-
-  C_PTR_NONE     =0b000,   // value is the type indicated by c_num_t
-  C_PTR_VOID     =0b001,   // value is a pointer of unknown type
-  C_PTR_TO       =0b010,   // value is a pointer to the indicated type
-  C_FILE_PTR     =0b011,   // special case - value is a C file pointer
-  C_BLTN_PTR     =0b100,   // special case - value is a C function pointer to a builtin function
-  C_STR_PTR      =0b101,   // special case - a common string pointer
-*/
-
-#define ALIGNED(x) __attribute__((aligned(x)))
+#define RSP_ALIGNED __attribute__((aligned (16)))
 
 
 type_t CONS_TYPE_OBJ = {
@@ -1241,8 +1309,7 @@ type_t CONS_TYPE_OBJ = {
   .val_cptr = C_PTR_VOID,
   .tp_atomic = 0,
   .val_ltag = LTAG_CONS,
-  .tp_readable = NULL,
-  .tp_writeable = NULL,
+  .tp_fields = NULL,
   .tp_val_size = NULL,
   .tp_new = rsp_cons,
   .tp_init = NULL,
@@ -1258,8 +1325,7 @@ type_t LIST_TYPE_OBJ = {
   .val_cptr = C_PTR_VOID,
   .tp_atomic = 0,
   .val_ltag = LTAG_LIST,
-  .tp_readable = NULL,
-  .tp_writeable = NULL,
+  .tp_fields = NULL,
   .tp_val_size = NULL,
   .tp_new = rsp_list,
   .tp_init = NULL,
@@ -1276,8 +1342,7 @@ type_t STR_TYPE_OBJ = {
   .val_cptr = C_STR_PTR,
   .tp_atomic = 0,
   .val_ltag = LTAG_STR,
-  .tp_readable = NULL,
-  .tp_writeable = NULL,
+  .tp_fields = NULL,
   .tp_val_size = NULL,
   .tp_new = rsp_str,
   .tp_init = NULL,
@@ -1293,8 +1358,7 @@ type_t CFILE_TYPE_OBJ = {
   .val_cptr = C_FILE_PTR,
   .tp_atomic = 0,
   .val_ltag = LTAG_CFILE,
-  .tp_readable = NULL,
-  .tp_writeable = NULL,
+  .tp_fields = NULL,
   .tp_val_size = NULL,
   .tp_new = rsp_cfile,
   .tp_init = NULL,
@@ -1304,3 +1368,5 @@ type_t CFILE_TYPE_OBJ = {
 
 
 type_t* CORE_OBJECT_TYPES[MAX_CORE_OBJECT_TYPES] = {&LIST_TYPE_OBJ, &CONS_TYPE_OBJ,};
+
+*/

@@ -99,7 +99,7 @@ val_t rsp_eval(val_t exp, val_t env)
   names = SAVE(car(cdr(exp)));
   exprs = SAVE(cdr(cdr(exp)));
   localenv = mk_envt(R_NIL,NULL);
-  *envp = mk_envframe(localenv,*envp,0);
+  *envp = mk_envtframe(localenv,*envp,0);
 
   // bind the names and arguments in the environment
   while (*names)
@@ -147,7 +147,7 @@ val_t rsp_eval(val_t exp, val_t env)
   fun = SAVE(rsp_eval(car(exp),*envp));
   args = SAVE(cdr(exp));
   if (isbuiltin(*fun)) goto ev_builtin;
-  appenv = SAVE(mk_envframe(envt_(*fun),*envp,fnargco_(*fun)));
+  appenv = SAVE(mk_envtframe(envt_(*fun),*envp,fnargco_(*fun)));
   evargs = !ismacro(*fun);
 
   for (;*args;*args=cdr(*args))
@@ -307,7 +307,6 @@ static rsp_tok_t get_char_tok(FILE* f)
 	  rsp_perror(SYNTAX_ERR,"Unexpected EOF reading character.");
 	  rsp_raise(SYNTAX_ERR);
     }
-
       return finalize_tok(U'\0',TOK_UNICODE);
     }
 
@@ -402,45 +401,45 @@ val_t vm_read_expr(FILE* f)
       {
 	take();
 	tl = vm_read_cons(f);
-	return vm_cons(F_QUOTE,tl);
+	return vm_mk_cons(F_QUOTE,tl);
       }
     case TOK_INT:
       {
 	iexpr = atoi(TOKBUFF);
-	expr = mk_int(iexpr);
+	expr = vm_mk_int(iexpr);
 	take();
 	return expr;
       }
     case TOK_FLOAT:
       {
 	fexpr = atof(TOKBUFF);
-	expr = mk_float(fexpr);
+	expr = vm_mk_float(fexpr);
 	take();
 	return expr;
       }
     case TOK_CHAR:
       {
 	iexpr = nextu8(TOKBUFF);
-	expr = mk_char(iexpr);
+	expr = vm_mk_char(iexpr);
 	take();
 	return expr;
       }
     case TOK_UNICODE:
       {
 	iexpr = atoi(TOKBUFF);
-	expr = mk_char(iexpr);
+	expr = vm_mk_char(iexpr);
 	take();
 	return expr;
       }
     case TOK_STR:
       {
-	expr = mk_str(TOKBUFF);
+	expr = vm_mk_str(TOKBUFF);
 	take();
 	return expr;
       }
     case TOK_SYM:
       {
-	expr = mk_sym(TOKBUFF,0);
+	expr = vm_mk_sym(TOKBUFF,0);
 	take();
 	return expr;
       }
@@ -456,7 +455,8 @@ val_t vm_read_expr(FILE* f)
 val_t vm_read_cons(FILE* f)
 {
   size_t cnt = 0; rsp_tok_t c;
-  val_t expr, OSP = SP;
+  val_t expr;
+  SAVESP;                      // save the current stack pointer
 
   while ((c = vm_get_token(f)) != TOK_RPAR && c != TOK_DOT)
     {
@@ -475,9 +475,9 @@ val_t vm_read_cons(FILE* f)
   if (c == TOK_RPAR)
     {
       take();
-      val_t ls = mk_list(cnt);
+      val_t ls = vm_mk_list(cnt);
       init_list(ls,EVAL,cnt);
-      SP = OSP;
+      RESTORESP;               // restore the saved stack pointer
       return ls;
     }
 
@@ -492,10 +492,10 @@ val_t vm_read_cons(FILE* f)
 
       val_t ca, cd = expr;
 
-      while (SP != OSP)
+      while (SP != __OSP__)
 	{
 	  ca = POP();
-	  cd = vm_cons(ca,cd);
+	  cd = vm_mk_cons(ca,cd);
 	}
 
       return cd;
@@ -524,7 +524,7 @@ void vm_print(val_t v, FILE* f)
 
   else
     {
-      type_t* to = get_val_type(v);
+      type_t* to = val_type(v);
       if (to->tp_prn)
 	{
 	  to->tp_prn(v,f);
@@ -540,9 +540,9 @@ void vm_print(val_t v, FILE* f)
 
 void vm_print_val(val_t v, FILE* f) // fallback printer
 {
-  char* tn = get_val_type_name(v);
-  if (isdirect(v)) fprintf(f,"#<%s:%u>",tn,(unsigned)unpad(v));
-  else fprintf(f,"#<%s:%p>",tn,toobj_(v));
+  char* tn = val_type_name(v);
+  if (isdirect(v)) fprintf(f,"#<%s:direct:%u>",tn,(unsigned)unpad(v));
+  else fprintf(f,"#<%s:object:%p>",tn,toobj_(v));
   return;
 }
 
@@ -569,4 +569,158 @@ val_t vm_load(FILE* f,val_t e)
   // restore the stack pointer and return
   SP = OSP;
   return R_NIL;
+}
+
+
+inline void vm_fetch()
+{
+  OPCODE = bc_instr_(FUNC)[PC];
+  PC++;
+  return;
+}
+
+inline void vm_decode()
+{
+  if (OPCODE > OP_BINDN)
+    {
+       OPARG(0) = *((unsigned*)(bc_instr_(FUNC) + PC));
+       OPARG(1) = *((unsigned*)(bc_instr_(FUNC) + PC + 4));
+       PC += 8;
+    }
+  else if (OPCODE > OP_BINDV)
+    {
+      OPARG(0) = *((unsigned*)(bc_instr_(FUNC) + PC));
+      PC += 4;
+    }
+
+  return;
+}
+
+val_t vm_exec(val_t c, val_t e)
+{
+  static void* exec_labels[] = {
+    &&op_halt, &&op_push, &&op_pop, &&op_save, &&op_load_name,
+    &&op_store_name, &&op_call, &&op_bindv, &&op_load_gval,
+    &&op_load_gstrm, &&op_restore, &&op_jump, &&op_branch,
+    &&op_bindn, &&op_load_var, &&op_store_var,};
+
+  unsigned argco, argmin, argmax;
+  bool vargs;
+  type_t* to;
+  table_t* nmspc;
+  dvec_t* efrm;
+
+  FUNC = c;
+  ENVT = e;
+
+  goto exec_loop;
+  
+ exec_loop:
+  vm_fetch();
+  vm_decode();
+  goto *exec_labels[OP];
+
+ op_halt:
+  return VALUE;
+
+ op_push:
+  PUSH(VALUE);
+  goto exec_loop;
+
+ op_pop:
+  VALUE = POP();
+  goto exec_loop;
+
+ op_save:
+  CONT = vm_mk_contframe(ARG(1));
+  goto exec_loop;
+
+ op_restore:
+  
+
+ op_load_name:
+  nmspc = isnmspc(ENVT) ? totable_(ENVT) : totable_(efrm_nmspc_(ENVT));
+  WRX(0) = nmspc_lookup(nmspc,VALUE);
+  VALUE = WRX(0);
+  goto exec_loop;
+
+ op_store_name:
+  nmspc = isnmspc(ENVT) ? totable_(ENVT) : totable_(efrm_nmspc_(ENVT));
+  WRX(0) = POP();
+  WRX(1) = nmspc_assign(nmspc,VALUE,WRX(1));
+  VALUE = WRX(1);
+  goto exec_loop;
+
+ op_call:
+  argco = SP - BP;
+
+  if (istype(VALUE)) // replace current contents of VALUE with the type's constructor
+    {
+      VALUE = totype_(VALUE)->tp_new;
+    }
+
+  if (isbuiltin(VALUE))
+    {
+      ARG(0) = uval_(VALUE);
+      goto op_call_bltn;
+    }
+
+  else if (isfunction(VALUE))
+    {
+      FUNC = template_(VALUE);
+      argmin = argco_(VALUE);
+      argmax = hasvargs(VALUE) ? UINT32_MAX : argmin;
+
+      if (argco < argmin || argco > argmax) rsp_raise(ARITY_ERR);
+      
+      ENVT = vm_mk_envtframe(fn_envt_(VALUE),fn_closure_(VALUE),EVAL,argco);
+      PC = 0;
+    }
+
+  else rsp_raise(TYPE_ERR);
+
+  goto exec_loop;
+
+ op_call_bltn:
+  WRX(0) = BUILTIN_FUNCTION_VARGS[ARG(0)];
+  vargs = WRX(0) > 0;
+  argmin = BUILTIN_FUNCTION_ARGCOS[ARG(0)];
+  argmax = min(UINT32_MAX, argmin + WRX(0));
+
+  if (argco < argmin || argco > argmax) rsp_raise(ARITY_ERR);
+  if (vargs) VALUE = BUILTIN_FUNCTIONS[ARG(0)].ffunc(EVAL);
+  else VALUE       = BUILTIN_FUNCTIONS[ARG(0)].vfunc(EVAL,argco);
+
+ op_bindv:
+  env_bind(ENVT,VALUE);
+  goto exec_loop;
+
+ op_load_gval:
+  VALUE = R_GLOBALS[ARG(0)];
+  goto exec_loop;
+
+ op_load_gstrm:
+  VALUE = R_STREAMS[ARG(0)];
+  goto exec_loop;
+
+ op_jump:
+  PC += ARG(0);
+  goto *exec_labels[OP];
+
+ op_branch:
+  if (cbool(VALUE)) goto op_jump;
+  else goto exec_loop;
+
+ op_load_var:
+  efrm = todvec_(ENVT);
+  WRX(0) = efrm_lookup(efrm,ARG(0),ARG(1));
+  VALUE = WRX(0);
+  goto exec_loop;
+
+ op_store_var:
+  efrm = todvec_(ENVT);
+  WRX(0) = POP();
+  WRX(1) = efrm_assign(efrm,ARG(0),ARG(1),WRX(0));
+  VALUE = WRX(1);
+  goto exec_loop;
 }

@@ -21,6 +21,10 @@ void repl() {
 
 
 int main(int argc, char** argv) {
+  R_STREAMS[0] = ((val_t)stdin) | LTAG_CFILE;
+  R_STREAMS[1] = ((val_t)stdout) | LTAG_CFILE;
+  R_STREAMS[2] = ((val_t)stderr) | LTAG_CFILE;
+
   bootstrap_rascal();
   fprintf(stdout, "Welcome to rascal2 v 0.0.1.0\n");
 

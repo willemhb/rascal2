@@ -14,6 +14,53 @@
 #define DEC_NUM_RE "[+-]?[[:digit:]]+"
 #define HEX_NUM_RE "[+-]?0[xX][[:xdigit:]]+"
 
+// stack manipulation functions
+inline val_t push(val_t** stk,val_t* sp, val_t* stksz, val_t v)
+{
+  *stk[(*sp)++] = v;
+  if (unlikely(*sp == *stksz))
+    {
+      *stksz *= 2;
+      vm_crealloc((uchr8_t**)stk,(*stksz)*8,false);
+    }
+
+  return *sp;
+}
+
+val_t  pushn(val_t** stk, val_t* sp, val_t* stksz, size_t n, ...)
+{
+  if (unlikely(*stksz <= (*sp + n)))
+    {
+      *stksz *= 2;
+      vm_crealloc((uchr8_t**)stk,(*stksz)*8,false);
+    }
+
+  val_t base = *sp + 1;
+  val_t top = *sp + n;
+  va_list args;
+  va_start(args,n);
+
+  for (val_t i = base; i <= top; i++) *stk[i] = va_arg(args,val_t);
+
+  *sp = top;
+  va_end(args);
+
+  return base;
+}
+
+inline val_t pop(val_t* stk, val_t* sp)
+{
+  if (unlikely(!(*sp))) rsp_raise(BOUNDS_ERR);
+  return stk[--(*sp)];
+}
+
+val_t  popn(val_t* stk, val_t* sp, size_t n)
+{
+  if (unlikely(n > (*sp))) rsp_raise(BOUNDS_ERR);
+  *sp -= n;
+  return stk[*sp + 1];
+}
+
 // numeric utilities
 unsigned cpow2_32(int i) {
   if (i < 0) return 1;
@@ -108,7 +155,7 @@ int u8strlen(const char* s) {
 
 int u8strcmp(const char* sx, const char* sy) {
   wchar_t wcx, wcy;
-  int xul, yul;
+  int32_t xul, yul;
 
   while ((*sx != '\0') && (*sy != '\0')) {
     xul = incu8(&wcx,sx);
@@ -164,35 +211,13 @@ inline int iswodigit(wint_t c) {
 
 /* error handling */
 
-void rsp_savestate(rsp_ectx_t* ctx) {
-  ctx->prev = exc_stack;
-  // save all the shared global state
-  ctx->FREE_state = FREE;
-  ctx->VALUE_state = VALUE;
-  ctx->ENVT_state = ENVT;
-  ctx->CONT_state = CONT;
-  ctx->TEMPLATE_state = TEMPLATE;
-  ctx->PC_state = PC;
-  return;
-}
-
-rsp_ectx_t* rsp_restorestate(rsp_ectx_t* ctx) {
-  // restore global state from the context
-  FREE = ctx->FREE_state;
-  VALUE = ctx->VALUE_state;
-  ENVT = ctx->ENVT_state;
-  CONT = ctx->CONT_state;
-  TEMPLATE = ctx->TEMPLATE_state;
-  PC = ctx->PC_state;
-  // return the previous saved ctx (caller uses this toreset the value of exc_stack)
-  return ctx->prev;
-}
-
-inline const char* rsp_errname(rsp_err_t errno) {
+inline const char* rsp_errname(rsp_err_t errno)
+{
   return ERROR_NAMES[errno];
 }
 
-void _rsp_print_error(const char* fl, int ln, const char* fnc, rsp_err_t eno, const char* fmt, ...) {
+void rsp_vperror(const chr8_t* fl, int32_t ln, const chr8_t* fnc, rsp_err_t eno, const chr8_t* fmt, ...)
+{
   fprintf(stderr,ERRINFO_FMT, fl, ln, fnc, rsp_errname(eno));
   va_list args;
 
@@ -215,7 +240,7 @@ void rsp_raise(rsp_err_t errno) {
 }
 
 void rsp_type_err(const char* fl, int ln, const char* fnc, const char* exp, val_t got) {
-  fprintf(stderr, "[%s:%i:%s:] type error: expected type %s, got %s", fl,ln,fnc,exp,get_val_type_name(got));
+  fprintf(stderr, "[%s:%i:%s:] type error: expected type %s, got %s", fl,ln,fnc,exp,val_tpname(got));
   rsp_raise(TYPE_ERR);
 }
 
