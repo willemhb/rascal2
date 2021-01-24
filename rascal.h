@@ -238,7 +238,6 @@ rstr_t*   mk_str(chr8_t*);
 val_t     cnvt_str(val_t);
 bstr_t*   mk_bstr(size_t,uchr8_t*);
 iostrm_t* mk_iostrm(chr8_t*,chr8_t*);
-sym_t*    mk_sym(chr8_t*,int32_t);
 method_t* mk_meth(table_t*,vec_t*,vec_t*,uint64_t);       // local names, bytecode, closure, flags
 cprim_t*  mk_cprim(rcfun_t,size_t,uint64_t);              // callable, argcount, flags
 vec_t*    mk_vec(size_t,val_t*);
@@ -350,25 +349,6 @@ int rsp_main(int32_t,chr8_t**);
 // compiler hint macros
 #define unlikely(x) __builtin_expect((x), 0)
 #define likely(x)   __builtin_expect((x), 1)
-
-// stack manipulation macros
-#define EPUSH(v)           push(&EVAL,&SP,&STACKSIZE,v)
-#define EPUSHN(n,...)      pushn(&EVAL,&SP,&STACKSIZE,n, ## __VA_ARGS__)  
-#define EPOP()             pop(EVAL,&SP)
-#define EPOPN(n)           popn(EVAL,&SP,n)
-#define DPUSH(v)           push(&DUMP,&DP,&DUMPSIZE,v)
-#define DPUSHN(n,...)      pushn(&DUMP,&DP,&DUMPSIZE,n, ## __VA_ARGS__)  
-#define DPOP()             pop(DUMP,&DP)
-#define DPOPN(n)           popn(DUMP,&DP,n)
-
-// these macros can be used to avoid the function call and bounds checking overhead of popn
-#define SAVESP     val_t __OSP__ = SP
-#define RESTORESP  SP = __OSP__
-#define SAVEDP     val_t __ODP__ = DP
-#define RESTOREDP  val_t DP = __ODP__
-
-// get the
-#define BASE(stk,argc) (stk - (argc))
 
 // type-generic min, max, and compare macros
 #define min(x,y)                     \
