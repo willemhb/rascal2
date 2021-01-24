@@ -9,7 +9,6 @@
 /* 
    this is the main header used by different modules - it supplies everything from common, rtypes, and globals, and provides convenience macros and
    function declarations. The actual functions are divided between several files, listed below (above the declarations of the functions to be found in those files)
-
    
    convenience macros are defined at the bottom
 
@@ -17,16 +16,82 @@
 
 /* util.c */
 // stack manipulating functions
-val_t  push(val_t**,val_t*,val_t*,val_t);         // stack, sp, stack size, value
-val_t  pushn(val_t**,val_t*,val_t*,size_t,...);   // stack, sp, stack size, va size, values
-val_t  pop(val_t*,val_t*);                        // stack, sp
-val_t  popn(val_t*,val_t*,size_t);                // stack, sp, size
-val_t  stk_reserve(val_t**,val_t*,val_t*,size_t);
+val_t  push(val_t);         
+val_t  pushn(size_t,...);
+val_t  stk_reserve(size_t);
+val_t  pop();
+val_t  popn(size_t);
 
 // numeric utilities
 uint32_t cpow2_32(int32_t);
 uint64_t cpow2_64(int64_t);
 uint64_t clog2(uint64_t);
+
+// inlined arithmetic bindings for C arithmetic operators
+int add_ii(int,int);
+int sub_ii(int,int);
+int mul_ii(int,int);
+int div_ii(int,int);
+int rem_ii(int,int);
+int neg_i(int);
+long add_ll(long,long);
+long sub_ll(long,long);
+long mul_ll(long,long);
+long div_ll(long,long);
+long rem_ll(long,long);
+long neg_l(long);
+float add_ff(float,float);
+float sub_ff(float,float);
+float mul_ff(float,float);
+float div_ff(float,float);
+float rem_ff(float,float);
+float neg_f(float);
+double add_dd(double,double);
+double sub_dd(double,double);
+double mul_dd(double,double);
+double div_dd(double,double);
+double rem_dd(double,double);
+double neg_d(double);
+
+// comparison
+bool eql_ii(int,int);
+bool neql_ii(int,int);
+bool gt_ii(int,int);
+bool ge_ii(int,int);
+bool lt_ii(int,int);
+bool le_ii(int,int);
+bool eql_ll(long,long);
+bool neql_ll(long,long);
+bool gt_ll(long,long);
+bool ge_ll(long,long);
+bool lt_ll(long,long);
+bool le_ll(long,long);
+bool eql_ff(float,float);
+bool neql_ff(float,float);
+bool gt_ff(float,float);
+bool ge_ff(float,float);
+bool lt_ff(float,float);
+bool le_ff(float,float);
+bool eql_dd(double,double);
+bool neql_dd(double,double);
+bool gt_dd(double,double);
+bool ge_dd(double,double);
+bool lt_dd(double,double);
+bool le_dd(double,double);
+
+// bitwise
+int  or_ii(int,int);
+int  xor_ii(int,int);
+int  and_ii(int,int);
+int  lsh_ii(int,int);
+int  rsh_ii(int,int);
+int  bneg_i(int);
+long or_ll(long,long);
+long xor_ll(long,long);
+long and_ll(long,long);
+long lsh_ll(long,long);
+long rsh_ll(long,long);
+long bneg_l(long);
 
 // string and character utilities
 hash32_t hash_str(const chr8_t*);
@@ -69,7 +134,6 @@ val_t    trace_fp(val_t);              // recursively follow a forward pointer (
 val_t    update_fp(val_t*);            // recursively update a forward pointer (generally safe)
 uptr_t   safe_cast(val_t);             // traces the forwarding pointer and checks for extension types (returns the pointer as an int)
 
-
 // comparison
 int32_t  ordflt(flt32_t,flt32_t);
 int32_t  ordint(int32_t,int32_t);
@@ -100,7 +164,6 @@ bool val_bytecode(val_t);
 bool val_readtab(val_t);
 bool val_modnmspc(val_t);
 bool val_modenvt(val_t);
-
 
 /* 
    safe casts - these check the type before performing the requested cast, and raise an error if the types don't match 
@@ -144,23 +207,21 @@ rstr_t*  strval(val_t);                // gets the string representation of a va
 
 /* obj.c */
 // memory management
-size_t   calc_mem_size(size_t);
-bool     gc_check(size_t,bool);
 uchr8_t* vm_cmalloc(uint64_t);                     // used for initialization and non-heap alloc
 int32_t  vm_cfree(uchr8_t*);                       // used at startup/cleanup
 uchr8_t* vm_crealloc(uchr8_t**,uint64_t,bool);     // used to grow stack/heap
-uchr8_t* vm_alloc(size_t,size_t);                  // allocate an aligned block - arguments are base size and extra
-size_t   vm_allocsz_str(type_t*,size_t,val_t*);
-size_t   vm_allocsz_bytes(type_t*,size_t,val_t*);
-size_t   vm_allocsz_copies(type_t*,size_t,val_t*);
-size_t   vm_allocsz_words(type_t*,size_t,val_t*);
-val_t*   vm_vec_realloc(vec_t*,size_t,size_t);     // reallocate a vector's elements
-void     gc_run();                                 // run the garbage collector
-void     gc_resize();                              // resize the TOSPACE
-uchr8_t* gc_reserve(val_t);                        // reserve a block in the TOSPACE
-val_t    gc_trace(val_t,vtag_t);                   // trace an arbitrary value (if ltag == LTAG_NONE, the value is tagged; otherwise, it's an untagged value with the specified ltag)
-bool     isallocated(val_t);                         // check if a value is heap allocated
-bool     in_heap(val_t v, uchr8_t* h, uint64_t sz);  // check if h <= addr(v) <= (h + sz)
+uchr8_t* vm_alloc(size_t,size_t,bool);              // allocate an aligned block - arguments are base size and extra
+size_t   vm_str_allc_sz(type_t*,size_t,val_t*);
+size_t   vm_vec_allc_sz(type_t*,size_t,val_t*);
+size_t   vm_seq_allc_sz(type_t*,size_t,val_t*);
+size_t   calc_mem_size(size_t);
+bool     gc_check(size_t,bool);
+val_t    gc_preserve(size_t,val_t);
+bool     gc_preserve_n(size_t,size_t,val_t*,...);
+void     gc_run();                                  // run the garbage collector
+val_t    gc_trace(val_t,vtag_t);                    
+bool     isallocated(val_t);                        // check if a value is heap allocated
+bool     in_heap(val_t v, uchr8_t* h, uint64_t sz); // check if h <= addr(v) <= (h + sz)
 
 /* 
    vm- and rascal constructor functions
@@ -168,37 +229,28 @@ bool     in_heap(val_t v, uchr8_t* h, uint64_t sz);  // check if h <= addr(v) <=
    functions prefixed with 'mk_' or 'vm_' are convenience functions and vm-internal functions. functions prefixed with 'rsp_' are rascal-callable. They do not need to validate
    their argument counts, but they shouldn't assume that their arguments are the correct type.
  */
+
+
 val_t     rsp_new(type_t*,size_t,val_t*);                 // entry-point for non-builtin constructor calls
-list_t*   mk_list(bool,size_t,...);
-val_t     rsp_new_list(size_t,val_t*);
+list_t*   mk_list(size_t,val_t*);
 cons_t*   mk_cons(val_t,val_t);
-val_t     rsp_new_cons(val_t,val_t);
 rstr_t*   mk_str(chr8_t*);
-val_t     rsp_new_str(val_t);
+val_t     cnvt_str(val_t);
 bstr_t*   mk_bstr(size_t,uchr8_t*);
-val_t     rsp_new_bstr(size_t,val_t*);
 iostrm_t* mk_iostrm(chr8_t*,chr8_t*);
-val_t     rsp_new_iostrm(size_t,val_t*);
-sym_t*    mk_sym(chr8_t*,int32_t);                        
-val_t     rsp_new_sym(size_t,val_t*);                     // a new symbol
-val_t     rsp_cnvt_sym(size_t,val_t*);
 method_t* mk_meth(table_t*,vec_t*,vec_t*,uint64_t);       // local names, bytecode, closure, flags
 cprim_t*  mk_cprim(rcfun_t,size_t,uint64_t);              // callable, argcount, flags
-vec_t*    mk_vec(otag_t,uint64_t,bool,size_t,...);        // otag, flags, whether the arguments are already stacked, and argcount
-val_t     rsp_new_vec(size_t,val_t*);
-node_t*   mk_node(size_t,val_t,bool);                     // order, hashkey, and whether to allocate space for bindings
-table_t*  mk_table(bool,otag_t,size_t,...);
-val_t     rsp_new_table(val_t*,int32_t);
+vec_t*    mk_vec(size_t,val_t*);
+table_t*  mk_table(size_t,val_t*);
 val_t     mk_bool(int32_t);
-val_t     rsp_new_bool(val_t*);
+val_t     cnvt_bool(val_t);
 val_t     mk_char(int32_t);
-val_t     rsp_new_char(val_t*);
+val_t     cnvt_char(val_t);
 val_t     mk_int(int32_t);
-val_t     rsp_new_int(val_t*);
+val_t     cnvt_int(val_t);
 val_t     mk_float(flt32_t);
-val_t     rsp_new_float(val_t*);
-type_t*   mk_type(type_t*,size_t,...);              // mk_type is only called for extension types, so they require a parent (the default is 'object')            
-val_t     rsp_new_type(type_t*,size_t,val_t*);
+val_t     cnvt_float(val_t);
+type_t*   mk_type(type_t*,size_t,val_t*);        
 
 // specialized accessors for nodes and vectors
 val_t get_nd_key(node_t*);
@@ -211,34 +263,30 @@ val_t* get_vec_elements(vec_t*);
 // indicates whether a new element was created and whether it was inserted in the left or right subtree)
 node_t* table_insert(table_t*,val_t);
 node_t* table_lookup(table_t*,val_t);
-sym_t*  intern_string(chr8_t*,size_t,hash32_t,int32_t);
 int32_t table_delete(table_t*,val_t);
+sym_t*  intern_string(chr8_t*,size_t,hash32_t,int32_t);
 
 val_t vec_append(vec_t*,val_t);
 val_t vec_pop(vec_t*);
-val_t vec_appendn(vec_t*,bool,size_t,...);
 val_t list_append(list_t*,val_t);
-val_t list_appendn(list_t*,bool,size_t,...);
 
 /* 
    vm.c - environment API, the VM, and the compiler 
  */
 
-int32_t   env_locate(envt_t*,sym_t*,val_t*,val_t*);           // find the nearest enclosing environment where this name is bound; store location in arg3 and current value in arg4; return a flag
-int32_t   env_extend(envt_t*,sym_t*,val_t*);                  // add supplied symbol to the environment
-size_t    lenv_bind(envt_t*,val_t);                           // bind the supplied value in the next free slot in the local environment and return the next free location
-val_t     local_lookup(envt_t*,size_t,size_t);
-val_t     local_assign(envt_t*,size_t,size_t,val_t);
-val_t     module_lookup(envt_t*,sym_t*);                      // lookup the supplied symbol in the environment
-val_t     module_assign(nmspc_t*,sym_t*,val_t);
+int32_t   env_locate(envt_t*,sym_t*,val_t*,val_t*);           // find the nearest enclosing environment where the symbol is located
+int32_t   env_extend(envt_t*,sym_t*,sym_t*);                  // add supplied symbol to the environment
+size_t    env_bind(envt_t*,val_t);
+val_t     env_lookup(envt_t*,val_t);
+val_t     env_assign(envt_t*,val_t,val_t);
 
 // the virtual machine and compiler
 opcode_t  vm_fetch_instr();                                  // load the next instruction int32_to INSTR[0] arguments in INSTR[1], INSTR[2], and INSTR[3]; update PC, return opcode
 cfrm_t*   vm_save(cfrm_t*);                                  // arg0 is the current continuation frame
-cfrm_t*   vm_restore(cfrm_t*);                               // restore the register state to that of the saved frame and return the old frame
+cfrm_t*   vm_restore(cfrm_t*);                               // restore the register state to that of the saved
 val_t     vm_exec(code_t*,envt_t*);                          // bytecode, envt, argument flags, argument count, arguments
 code_t*   vm_compile(val_t,envt_t*);                         // entry point for the compiler
-val_t     vm_expand(func_t* f,envt_t* e,list_t* l);          // evaluate the macro f in the compile-time environment e and the list of supplied arguments l
+val_t     vm_expand(func_t* f,envt_t* e,list_t* l);          // evaluate the macro f in e with the given list of arguments
 val_t     vm_backquote(envt_t*,val_t);                       // A C function to implement the backquote macro
 
 /* rspio.c - printing, reading, and writing */
@@ -262,8 +310,8 @@ rsp_tok_t vm_get_token(iostrm_t*);
 val_t     vm_read_expr(iostrm_t*);
 val_t     vm_read_cons(iostrm_t*);                   // read a cons or list
 val_t     vm_read_bytes(iostrm_t*);                  // optimized reader for bytestring literals
-val_t     vm_read_coll(type_t*,iostrm_t*,rsp_tok_t); // read a sequence of space-separated expressions up to a delimiter, then pass the result to the type's constructor
-void      vm_print(val_t,iostrm_t*);             
+val_t     vm_read_coll(type_t*,iostrm_t*,rsp_tok_t);
+void      vm_print(val_t,iostrm_t*);
 val_t     vm_load(iostrm_t*,val_t);
 
 /* bltins.c */
@@ -275,6 +323,7 @@ void init_types();
 void init_registers();
 
 // builtins
+void init_symbol_table();
 void init_builtin_types();
 void init_special_forms();
 void init_global_variables();
@@ -300,25 +349,6 @@ int rsp_main(int32_t,chr8_t**);
 // compiler hint macros
 #define unlikely(x) __builtin_expect((x), 0)
 #define likely(x)   __builtin_expect((x), 1)
-
-// stack manipulation macros
-#define EPUSH(v)           push(&EVAL,&SP,&STACKSIZE,v)
-#define EPUSHN(n,...)      pushn(&EVAL,&SP,&STACKSIZE,n, ## __VA_ARGS__)  
-#define EPOP()             pop(EVAL,&SP)
-#define EPOPN(n)           popn(EVAL,&SP,n)
-#define DPUSH(v)           push(&DUMP,&DP,&DUMPSIZE,v)
-#define DPUSHN(n,...)      pushn(&DUMP,&DP,&DUMPSIZE,n, ## __VA_ARGS__)  
-#define DPOP()             pop(DUMP,&DP)
-#define DPOPN(n)           popn(DUMP,&DP,n)
-
-// these macros can be used to avoid the function call and bounds checking overhead of popn
-#define SAVESP     val_t __OSP__ = SP
-#define RESTORESP  SP = __OSP__
-#define SAVEDP     val_t __ODP__ = DP
-#define RESTOREDP  val_t DP = __ODP__
-
-// get the
-#define BASE(stk,argc) (stk - (argc))
 
 // type-generic min, max, and compare macros
 #define min(x,y)                     \
