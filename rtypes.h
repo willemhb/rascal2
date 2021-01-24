@@ -41,12 +41,29 @@ typedef table_t nmspc_t;
 typedef table_t symtab_t;
 typedef table_t readtab_t;
 
-/* valid function signatures for functions callable from within rascal */
+/* 
+   valid function signatures for functions callable from within rascal 
+
+   functions of up to 3 direct arguments are supported for speed, but generally functions take their
+   arguments from the stack. If a builtin function accepts variable arguments, then it should take exactly two parameters;
+   the number of arguments and the top of the stack. 
+
+   macro functions implemented in C take the expansion environment as their first argument.
+
+ */
+
 typedef union
 {
-  val_t (*farg_fun)(val_t*);                            // common farg functions
-  val_t (*varg_fun)(size_t,val_t*);                     // common varg functions
-  val_t (*farg_mac)(envt_t*,val_t*);                    // farg macro functions
+  val_t (*z_farg_fun)();
+  val_t (*u_farg_fun)(val_t);
+  val_t (*b_farg_fun)(val_t,val_t);
+  val_t (*t_farg_fun)(val_t,val_t,val_t);
+  val_t (*n_farg_fun)(val_t*);
+  val_t (*varg_fun)(size_t,val_t*);
+  val_t (*u_farg_mac)(envt_t*,val_t);
+  val_t (*b_farg_mac)(envt_t*,val_t,val_t);
+  val_t (*t_farg_mac)(envt_t*,val_t,val_t,val_t);
+  val_t (*n_farg_mac)(envt_t*,val_t*);                  // farg macro functions
   val_t (*varg_mac)(envt_t*,size_t,val_t*);             // varg macro functions
   val_t (*farg_meta)(type_t*,val_t*);                   // farg meta functions
   val_t (*varg_meta)(type_t*,size_t,val_t*);            // varg meta functions
@@ -197,6 +214,7 @@ typedef enum
   VTAG_IMAG             = WTAG_IMAG  | NTAG_DIRECT,
   VTAG_BOOL             = WTAG_BOOL  | NTAG_DIRECT,
   VTAG_CHAR             = WTAG_CHAR  | NTAG_DIRECT,
+  VTAG_NONE             = WTAG_NONE,                   // sentinel
 } vtag_t;
 
 typedef enum
@@ -222,39 +240,39 @@ typedef enum
 
 typedef enum
 {
-  CNUM_UINT8    =0b00000010,
-  CNUM_INT8     =0b00000100,
-  CNUM_UINT16   =0b00001010,
-  CNUM_INT16    =0b00000110,
-  CNUM_UINT32   =0b00011010,
-  CNUM_INT32    =0b00001110,
-  CNUM_UINT64   =0b00111010,
-  CNUM_INT64    =0b00011110,
-  CNUM_INT128   =0b00111110,
-  CNUM_FLOAT32  =0b00001111,
-  CNUM_FLOAT64  =0b00011111,
-  CNUM_FLOAT128 =0b00111111,
-  CNUM_IMAG32   =0b10001111,
-  CNUM_IMAG64   =0b10011111,
-  CNUM_IMAG128  =0b10111111,
-  CNUM_CMPLX32  =0b11001111,
-  CNUM_CMPLX64  =0b11011111,
-  CNUM_CMPLX128 =0b11111111,
+  CNUM_UINT8    =0b00000010u,
+  CNUM_INT8     =0b00000100u,
+  CNUM_UINT16   =0b00001010u,
+  CNUM_INT16    =0b00000110u,
+  CNUM_UINT32   =0b00011010u,
+  CNUM_INT32    =0b00001110u,
+  CNUM_UINT64   =0b00111010u,
+  CNUM_INT64    =0b00011110u,
+  CNUM_INT128   =0b00111110u,
+  CNUM_FLOAT32  =0b00001111u,
+  CNUM_FLOAT64  =0b00011111u,
+  CNUM_FLOAT128 =0b00111111u,
+  CNUM_IMAG32   =0b10001111u,
+  CNUM_IMAG64   =0b10011111u,
+  CNUM_IMAG128  =0b10111111u,
+  CNUM_CMPLX32  =0b11001111u,
+  CNUM_CMPLX64  =0b11011111u,
+  CNUM_CMPLX128 =0b11111111u,
 } c_num_t;
 
 // these pointer codes are cruder than the numeric codes, but they should be able to
 // express enough information about rascal fields to call basic C library functions
 // (if the depth of a pointer is unknown, then it should be categorized as a void pointer)
 typedef enum {
-  PTR_NONE   = 0x00,
-  PTR_VOID   = 0x01,
-  PTR_CHR    = 0x02,
-  PTR_UCHR   = 0x04,
-  PTR_FILE   = 0x08,
-  PTR_RFUNC  = 0x10,
-  PTR_PTR    = 0x20,
-  PTR_PPTR   = 0x40,
-  PTR_TAGGED = 0x80,
+  PTR_NONE   = 0x00u,
+  PTR_VOID   = 0x01u,
+  PTR_CHR    = 0x02u,
+  PTR_UCHR   = 0x04u,
+  PTR_FILE   = 0x08u,
+  PTR_RFUNC  = 0x10u,
+  PTR_PTR    = 0x20u,
+  PTR_PPTR   = 0x40u,
+  PTR_TAGGED = 0x80u,
   PTR_RPTR   = PTR_TAGGED | PTR_VOID,
   PTR_RDATA  = PTR_TAGGED | PTR_NONE,
 } c_ptr_t;
@@ -357,6 +375,7 @@ struct sym_t {
 
 typedef enum
   {
+    
     SMFL_INTERNED = 0x01,
     SMFL_GLOBAL   = 0x02,
     SMFL_RESERVED = 0x04,
@@ -385,6 +404,7 @@ struct type_t {
   /*meta information */
   OBJECT_HEAD;           // pointer to the metaobject that created the type
   type_t* tp_parent;     // a pointer to the parent type
+  type_t* tp_origin;     // a pointer to the builtin type that this type subtyped (if any)
   hash32_t tp_order;     // the order in which this type was created
   hash32_t tp_hash;
 
@@ -398,22 +418,22 @@ struct type_t {
   bool       tp_extensible_p;
 
   /* size and layout information */
-  vtag_t    tp_vtag;
-  otag_t    tp_otag;
-  c_num_t   tp_cnum;
-  c_ptr_t   tp_cptr;
+  vtag_t     tp_vtag;
+  otag_t     tp_otag;
+  uint16_t   tp_c_num;
+  uint16_t   tp_c_ptr;
 
   size_t    tp_base;                  // the type's base size in bytes (this can be 0)
+  size_t    tp_nfields;               // the number of rascal accessible fields
   table_t*  tp_fields;                // the type's rascal accessible fields
   cprim_t*  tp_new;                   // called to create a new rascal value 
 
-  size_t      (*tp_alloc_sz)(type_t*,size_t,val_t*);             // called by extensions of builtin types to determine the total allocation size
-  val_t       (*tp_init)(uchr8_t*,size_t,val_t*);                // called by extensions of builtin types to initialize the builtin part; takes an explicit, preallocated memory area
-  type_t*     (*tp_subtype)(type_t*,size_t,val_t*);              // called to create a new subtype
+  size_t      (*tp_alloc_sz)(type_t*,size_t,val_t*);  // called by extensions of builtin types to determine the total allocation size
+  val_t       (*tp_init)(uchr8_t*,size_t,val_t*);     // called by extensions of builtin types to initialize builtin part
+  type_t*     (*tp_subtype)(type_t*,size_t,val_t*);   // called to create a new subtype
   void        (*tp_prn)(val_t,iostrm_t*);
   int32_t     (*tp_ord)(val_t,val_t);
   size_t      (*tp_size)(val_t);
-
   /* Just the dang type name! */
   chr8_t name[1];
 };

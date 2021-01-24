@@ -27,9 +27,23 @@ inline val_t push(val_t** stk,val_t* sp, val_t* stksz, val_t v)
   return *sp;
 }
 
+// reserve a portion of the stack in advance
+val_t stk_reserve(val_t** stk, val_t* sp, val_t* stksz, size_t n)
+{
+  if (*stksz <= (*sp + n))
+    {
+      *stksz *= 2;
+      vm_crealloc((uchr8_t**)stk,(*stksz)*8,false);
+    }
+
+  val_t out = *sp + 1;
+  *sp += n;
+  return out;
+}
+
 val_t  pushn(val_t** stk, val_t* sp, val_t* stksz, size_t n, ...)
 {
-  if (unlikely(*stksz <= (*sp + n)))
+  if (*stksz <= (*sp + n))
     {
       *stksz *= 2;
       vm_crealloc((uchr8_t**)stk,(*stksz)*8,false);
@@ -100,20 +114,24 @@ inline unsigned long clog2(unsigned long i) {
   else return 64 - __builtin_clzl(i);
 }
 
-hash64_t hash_str(const char* s) {
-  hash64_t out = FNV_1A_64_OFFSET;
+hash32_t hash_str(const char* s) {
+  hash32_t out = FNV_1A_32_OFFSET;
   int limit = strlen(s);
 
   for (int i = 0; i < limit; i++) {
     out ^= s[i];
-    out *= FNV_1A_64_PRIME;
+    out *= FNV_1A_32_PRIME;
   }
 
   return out;
 }
 
 inline int strsz(const char* s) {
-  return strlen(s) + 1;
+  if (!s)
+    return 0;
+
+  else
+    return strlen(s) + 1;
 }
 
 inline int u8len(const char* s) {

@@ -20,6 +20,7 @@
 #include <wchar.h>
 #include <wctype.h>
 #include <locale.h>
+#include <errno.h>
 
 // unicode constants
 #define MIN_CODEPOINT 0

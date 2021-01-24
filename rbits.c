@@ -22,16 +22,8 @@ inline otag_t otag(val_t v)
     }
 }
 
-inline chr8_t*  val_tpname(val_t v)             { return val_type(v)->name; }
-inline table_t* val_fields(val_t v)             { return val_type(v)->tp_fields; }
-inline size_t   val_nfields(val_t v)            { return val_type(v)->tp_fields->count; }
-inline c_num_t  val_cnum(val_t v)               { return val_type(v)->tp_cnum; }
-inline c_num_t  common_cnum(val_t x, val_t y)   { return val_cnum(x) | val_cnum(y) ; }
-inline size_t   val_tpbase(val_t x)             { return val_type(x)->tp_base; }
 
 /* predicates */
-inline bool isdirect(val_t v) { return !v || ntag(v) == NTAG_DIRECT; }
-inline bool isatom(val_t v) { return val_type(v)->tp_atomic_p; }
 inline bool iscvalue(val_t v)
 {
   ntag_t t = ntag(v);
@@ -104,8 +96,10 @@ size_t val_size(val_t v)
   if (isdirect(v)) return 8;
 
   type_t* to = val_type(v);
-  if (to->tp_size) return to->tp_size(v);
-  else return tp_base(to);
+  if (type_size(to))
+    return type_size(to)(v);
+  else
+    return type_base(to);
 }
 
 size_t val_asize(val_t v)
@@ -136,7 +130,9 @@ val_t val_ftoi(val_t v)
 
 c_num_t vm_promote(val_t* x, val_t* y)
 {
-  c_num_t xn = common_cnum(*x,*y);
+  type_t* tox = val_type(*x);
+  type_t* toy = val_type(*y);
+  val_t xn = type_c_num(tox) | type_c_num(toy);
   if (xn == CNUM_FLOAT32)
     {
       *x = val_itof(*x);
@@ -152,7 +148,7 @@ c_num_t vm_promote(val_t* x, val_t* y)
   {                                                                            \
     if (!test(v))                                                              \
   {                                                                            \
-    rsp_vperror(fl,ln,fnc,TYPE_ERR,TYPEERR_FMT,#rtype,val_tpname(v)) ;         \
+    rsp_vperror(fl,ln,fnc,TYPE_ERR,TYPEERR_FMT,#rtype,type_name(v)) ;          \
     rsp_raise(TYPE_ERR) ;						       \
     return (ctype)0;                                                           \
   }                                                                            \
@@ -164,7 +160,7 @@ c_num_t vm_promote(val_t* x, val_t* y)
   {                                                                            \
     if (!test(v))                                                              \
   {                                                                            \
-    rsp_vperror(fl,ln,fnc,TYPE_ERR,TYPEERR_FMT,#rtype,val_tpname(v)) ;         \
+    rsp_vperror(fl,ln,fnc,TYPE_ERR,TYPEERR_FMT,#rtype,type_name(v)) ;          \
     rsp_raise(TYPE_ERR) ;						       \
     return (ctype)0;                                                           \
   }                                                                            \
@@ -254,14 +250,30 @@ inline int32_t ordsymval(val_t sx, val_t sy)
   return ordhash(smx->hash,smy->hash) || u8strcmp(smx->name,smy->name);
 }
 
-
 int32_t vm_ord(val_t x, val_t y)
 {
-  if (!isatom(x) || !isatom(y)) rsp_raise(TYPE_ERR);
   type_t* tx = val_type(x), *ty = val_type(y);
+  if (!type_atomic_p(tx) || !type_atomic_p(ty))
+    rsp_raise(TYPE_ERR);
 
-  if (tx != ty) return ordhash(tx->tp_hash,ty->tp_hash);
-  else if (tx->tp_ord) return tx->tp_ord(x,y);
-  else if (tx->tp_cnum == CNUM_FLOAT32) return ordflt(fval(x),fval(y));
-  else return ordint(ival(x),ival(y));
+  if (tx != ty)
+    return ordhash(tx->tp_hash,ty->tp_hash);
+  else if (type_ord(tx))
+    return type_ord(tx)(x,y);
+
+  else if (type_c_num(tx) == CNUM_FLOAT32)
+    return ordflt(fval(x),fval(y));
+
+  else
+    return ordint(ival(x),ival(y));
+}
+
+
+rstr_t* strval(val_t v)
+{
+  if (issym(v))
+    return sm_name(v);
+
+  else
+    return ecall(tostr,v);
 }

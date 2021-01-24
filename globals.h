@@ -16,8 +16,8 @@
 extern type_t*  CORE_DIRECT_TYPES[16];
 extern type_t*  CORE_OBJECT_TYPES[16];
 extern type_t*  CORE_BIGNUM_TYPES[16];
-extern type_t** CORE_TYPES[3];
-extern type_t* TYPE_METAOBJ;
+extern type_t*  CORE_TYPES[3][16];
+extern type_t*  TYPE_METAOBJ;
 
 // special constants - common values, singletons, sentinels
 const val_t R_GLOBAL_VALUES[16] =  { 0x0ul, VTAG_SYM, VTAG_CONS, (UINT32_MAX + 1) | VTAG_BOOL, VTAG_BOOL, ((val_t)UINT32_MAX<<32) | VTAG_BOOL, (UINT32_MAX + 2) | VTAG_BOOL,
@@ -67,7 +67,7 @@ const char* SPECIAL_KEYWORDS[] =  { "r",  "w", "a", "r+", "w+", "a+", "alnum", "
  // RAM is the main HEAP; FREE is the address of the next free cons cell; toffset is used to reallocate a block before GC if the reallocation would trigger a collection
 extern unsigned char *FROMSPACE, *TOSPACE, *RAM, *FREE, *TOFFSET;
 const float RAM_LOAD_FACTOR = 0.6;
-extern val_t HEAPSIZE, STACKSIZE, DUMSPIZE;
+extern val_t HEAPSIZE, STACKSIZE, DUMPSIZE;
 extern bool GROWHEAP;
 
 // main registers and stacks
@@ -207,6 +207,7 @@ typedef enum
   ARITY_ERR,   // wrong argument count
   SYNTAX_ERR,  // bad syntax
   NAME_ERR,    // attempt to rebind a constant
+  IO_ERR,
 } rsp_err_t;
 
 extern rsp_err_t rsp_errcode; // the current error code
@@ -215,7 +216,7 @@ const char* ERROR_NAMES[] =
 {
   "type", "null", "none", "unbound",
   "envt", "value", "bounds", "arity",
-  "syntax", "name",
+  "syntax", "name","io",
 };
 
 

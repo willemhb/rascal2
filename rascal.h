@@ -21,6 +21,7 @@ val_t  push(val_t**,val_t*,val_t*,val_t);         // stack, sp, stack size, valu
 val_t  pushn(val_t**,val_t*,val_t*,size_t,...);   // stack, sp, stack size, va size, values
 val_t  pop(val_t*,val_t*);                        // stack, sp
 val_t  popn(val_t*,val_t*,size_t);                // stack, sp, size
+val_t  stk_reserve(val_t**,val_t*,val_t*,size_t);
 
 // numeric utilities
 uint32_t cpow2_32(int32_t);
@@ -28,7 +29,7 @@ uint64_t cpow2_64(int64_t);
 uint64_t clog2(uint64_t);
 
 // string and character utilities
-hash64_t hash_str(const chr8_t*);
+hash32_t hash_str(const chr8_t*);
 int32_t strsz(const chr8_t*);
 int32_t u8strlen(const chr8_t*);
 int32_t u8strcmp(const chr8_t*,const chr8_t*);
@@ -62,17 +63,12 @@ otag_t   otag(val_t);
 type_t*  val_type(val_t);              // get the type object associated with the value
 size_t   val_size(val_t);              // get the size of an object in bytes
 size_t   val_asize(val_t);
-chr8_t*  val_tpname(val_t);
-table_t* val_fields(val_t);
-size_t   val_nfields(val_t);
-size_t   val_nflags(val_t);
-c_num_t  val_cnum(val_t);
-c_num_t  common_cnum(val_t,val_t);
-uint64_t tp_base(type_t*);
+
 // handling fptrs
 val_t    trace_fp(val_t);              // recursively follow a forward pointer (generally safe)
 val_t    update_fp(val_t*);            // recursively update a forward pointer (generally safe)
-val_t    safe_cast(val_t);             // traces the forwarding pointer and checks for extension types
+uptr_t   safe_cast(val_t);             // traces the forwarding pointer and checks for extension types (returns the pointer as an int)
+
 
 // comparison
 int32_t  ordflt(flt32_t,flt32_t);
@@ -85,10 +81,7 @@ int32_t  ordsymval(val_t,val_t);
 int32_t  vm_ord(val_t,val_t);          // top level ordering function
 
 // predicates (these functions are just for those tests that can't be safely done with macros; macro definitions for simple tests are at the bottom of the file)
-bool isdirect(val_t);
-bool isatom(val_t);
 bool iscvalue(val_t);
-bool isobj(val_t);
 bool hasmethflags(val_t);
 bool ispair(val_t);                // test if this is a list or a cons
 bool tab_nmspc(table_t*);
@@ -108,12 +101,14 @@ bool val_readtab(val_t);
 bool val_modnmspc(val_t);
 bool val_modenvt(val_t);
 
+
 /* 
    safe casts - these check the type before performing the requested cast, and raise an error if the types don't match 
    there are also safecasts for special VM types (not strictly different types) and a genericized safecast for callables
    and conses or lists
    
  */
+
 #define SAFECAST_ARGS const chr8_t*,int32_t,const chr8_t*,val_t
 
 list_t*   tolist( SAFECAST_ARGS );
@@ -145,9 +140,12 @@ val_t    val_itof(val_t);              // floating point32_t conversion
 val_t    val_ftoi(val_t);              // int32_teger conversion
 c_num_t  vm_promote(val_t*,val_t*);    // cast to common type and return common type
 bool     cbool(rbool_t);               // convert rascal boolean to C boolean
+rstr_t*  strval(val_t);                // gets the string representation of a value if it has an obvious one, otherwise throw
 
 /* obj.c */
 // memory management
+size_t   calc_mem_size(size_t);
+bool     gc_check(size_t,bool);
 uchr8_t* vm_cmalloc(uint64_t);                     // used for initialization and non-heap alloc
 int32_t  vm_cfree(uchr8_t*);                       // used at startup/cleanup
 uchr8_t* vm_crealloc(uchr8_t**,uint64_t,bool);     // used to grow stack/heap
@@ -156,20 +154,13 @@ size_t   vm_allocsz_str(type_t*,size_t,val_t*);
 size_t   vm_allocsz_bytes(type_t*,size_t,val_t*);
 size_t   vm_allocsz_copies(type_t*,size_t,val_t*);
 size_t   vm_allocsz_words(type_t*,size_t,val_t*);
-val_t    vm_init_cons(uchr8_t*,size_t,val_t*);
-val_t    vm_init_obj(uchr8_t*,size_t,val_t*);
-val_t    vm_init_str(uchr8_t*,size_t,val_t*);
-val_t    vm_init_bytes(uchr8_t*,size_t,val_t*);
-val_t    vm_init_table(uchr8_t*,size_t,val_t*);
-val_t    vm_init_node(uchr8_t*,size_t,val_t*);
-val_t    vm_init_vec(uchr8_t*,size_t,val_t*);
-val_t*   vm_realloc(val_t*,size_t,size_t);         // reallocate a block of heap memory
+val_t*   vm_vec_realloc(vec_t*,size_t,size_t);     // reallocate a vector's elements
 void     gc_run();                                 // run the garbage collector
 void     gc_resize();                              // resize the TOSPACE
 uchr8_t* gc_reserve(val_t);                        // reserve a block in the TOSPACE
 val_t    gc_trace(val_t,vtag_t);                   // trace an arbitrary value (if ltag == LTAG_NONE, the value is tagged; otherwise, it's an untagged value with the specified ltag)
-bool     isallocated(val_t);                       // check if a value is heap allocated
-bool     in_heap(val_t v, val_t* h, uint64_t sz);  // check if h <= addr(v) <= (h + sz)
+bool     isallocated(val_t);                         // check if a value is heap allocated
+bool     in_heap(val_t v, uchr8_t* h, uint64_t sz);  // check if h <= addr(v) <= (h + sz)
 
 /* 
    vm- and rascal constructor functions
@@ -181,15 +172,15 @@ val_t     rsp_new(type_t*,size_t,val_t*);                 // entry-point for non
 list_t*   mk_list(bool,size_t,...);
 val_t     rsp_new_list(size_t,val_t*);
 cons_t*   mk_cons(val_t,val_t);
-val_t     new_cons(val_t*);
-rstr_t*   mk_str(const chr8_t*);
-val_t     rsp_new_str(val_t*);
-bstr_t*   mk_bstr(size_t,const uchr8_t*);
+val_t     rsp_new_cons(val_t,val_t);
+rstr_t*   mk_str(chr8_t*);
+val_t     rsp_new_str(val_t);
+bstr_t*   mk_bstr(size_t,uchr8_t*);
 val_t     rsp_new_bstr(size_t,val_t*);
-iostrm_t* mk_iostrm(const chr8_t*,const chr8_t*);
-val_t     rsp_new_iostrm(val_t*);
-sym_t*    mk_sym(const char*,int32_t);
-val_t     rsp_new_sym(size_t,val_t*);
+iostrm_t* mk_iostrm(chr8_t*,chr8_t*);
+val_t     rsp_new_iostrm(size_t,val_t*);
+sym_t*    mk_sym(chr8_t*,size_t,hash32_t,int32_t,bool);   // the third argument is a flag indicating the the authority to create
+val_t     rsp_new_sym(size_t,val_t*);                     // a new symbol
 val_t     rsp_cnvt_sym(size_t,val_t*);
 method_t* mk_meth(table_t*,vec_t*,vec_t*,uint64_t);       // local names, bytecode, closure, flags
 cprim_t*  mk_cprim(rcfun_t,size_t,uint64_t);              // callable, argcount, flags
@@ -367,26 +358,26 @@ int rsp_main(int32_t,chr8_t**);
 #define unpad(d)             ((d) >> 32)
 #define tag_v(v,t)           (pad(v) | (t))
 #define tag_p(p,t)           (((val_t)(p)) | (t))
-#define tagi(v)              (pad(v) | LTAG_INT)
-#define tagc(v)              (pad(v) | LTAG_CHAR)
-#define tagb(v)              (pad(v) | LTAG_BOOL)
-#define tagf(v)              (pad(v) | LTAG_FLOAT)
+#define tagi(v)              (pad(v) | VTAG_INT)
+#define tagc(v)              (pad(v) | VTAG_CHAR)
+#define tagb(v)              (pad(v) | VTAG_BOOL)
+#define tagf(v)              (pad(v) | VTAG_FLOAT)
 
 // automatic pointer tagging macro
 #define tagp(p)                                  \
   _Generic((p),                                  \
-	   list_t*:((val_t)(p)) | LTAG_LIST,     \
-           cons_t*:((val_t)(p)) | LTAG_CONS,     \
-           rstr_t*:((val_t)(p)) | LTAG_STR,      \
-	   sym_t*:((val_t)(p))  | LTAG_SYM,	 \
-           bstr_t*:((val_t)(p)) | LTAG_BSTR,     \
-           vec_t*:((val_t)(p))  | LTAG_VEC,      \
-           node_t*:((val_t)(p)) | LTAG_NODE,     \
-           iostrm_t*:((val_t)(p)) | LTAG_IOSTRM, \
-           table_t*:((val_t)(p)) | LTAG_TABLE,   \
-	   method_t*:((val_t)(p)) | LTAG_METHOD, \
-	   cprim_t*:((val_t)(p)) | LTAG_CPRIM,   \
-	   default:((val_t)(p)) | LTAG_OBJECT)
+	   list_t*:((val_t)(p)) | VTAG_LIST,     \
+           cons_t*:((val_t)(p)) | VTAG_CONS,     \
+           rstr_t*:((val_t)(p)) | VTAG_STR,      \
+	   sym_t*:((val_t)(p))  | VTAG_SYM,	 \
+           bstr_t*:((val_t)(p)) | VTAG_BSTR,     \
+           vec_t*:((val_t)(p))  | VTAG_VEC,      \
+           node_t*:((val_t)(p)) | VTAG_NODE,     \
+           iostrm_t*:((val_t)(p)) | VTAG_IOSTRM, \
+           table_t*:((val_t)(p)) | VTAG_TABLE,   \
+	   method_t*:((val_t)(p)) | VTAG_METHOD, \
+	   cprim_t*:((val_t)(p)) | VTAG_CPRIM,   \
+	   default:((val_t)(p)) | VTAG_OBJECT)
 
 #define ptr(t,v)             ((t)addr(v))
 #define uval(v)              (((rsp_c64_t)(v)).padded.bits.bits32)
@@ -399,10 +390,42 @@ int rsp_main(int32_t,chr8_t**);
 /* 
    generic macros
 
-   these macros are used to create a single interface for working with rascal values that handles data safely (if the value is a tagged pointer)
-   or quickly (if it's an untagged pointer to the native C type).
+   these macros are used to create a single interface for working with rascal values that handles data safely
+   or quickly if it's an untagged pointer to the native C type.
+*/
 
- */
+#define GENERIC_TYPE_ACCESSOR(v)	          \
+  _Generic((v),                                   \
+	   type_t*:v,				  \
+           val_t:val_type((val_t)(v)))
+
+#define type_meta(v)          (type_t*)(GENERIC_TYPE_ACCESSOR(v)->tp_meta & (~0xful))
+#define type_parent(v)        GENERIC_TYPE_ACCESSOR(v)->tp_parent
+#define type_origin(v)        GENERIC_TYPE_ACCESSOR(v)->tp_origin
+#define type_order(v)         GENERIC_TYPE_ACCESSOR(v)->tp_order
+#define type_hash(v)          GENERIC_TYPE_ACCESSOR(v)->tp_hash
+#define type_builtin_p(v)     GENERIC_TYPE_ACCESSOR(v)->tp_builtin_p
+#define type_direct_p(v)      GENERIC_TYPE_ACCESSOR(v)->tp_direct_p
+#define type_atomic_p(v)      GENERIC_TYPE_ACCESSOR(v)->tp_atomic_p
+#define type_heap_p(v)        GENERIC_TYPE_ACCESSOR(v)->tp_heap_p
+#define type_store_p(v)       GENERIC_TYPE_ACCESSOR(v)->tp_store_p
+#define type_final_p(v)       GENERIC_TYPE_ACCESSOR(v)->tp_final_p
+#define type_extensible_p(v)  GENERIC_TYPE_ACCESSOR(v)->tp_extensible_p
+#define type_vtag(v)          GENERIC_TYPE_ACCESSOR(v)->tp_vtag
+#define type_otag(v)          GENERIC_TYPE_ACCESSOR(v)->tp_otag
+#define type_c_num(v)         GENERIC_TYPE_ACCESSOR(v)->tp_c_num
+#define type_c_ptr(v)         GENERIC_TYPE_ACCESSOR(v)->tp_c_ptr
+#define type_base(v)          GENERIC_TYPE_ACCESSOR(v)->tp_base
+#define type_fields(v)        GENERIC_TYPE_ACCESSOR(v)->tp_fields
+#define type_new(v)           GENERIC_TYPE_ACCESSOR(v)->tp_new
+#define type_alloc_sz(v)      GENERIC_TYPE_ACCESSOR(v)->tp_alloc_sz
+#define type_init(v)          GENERIC_TYPE_ACCESSOR(v)->tp_init
+#define type_prn(v)           GENERIC_TYPE_ACCESSOR(v)->tp_prn
+#define type_ord(v)           GENERIC_TYPE_ACCESSOR(v)->tp_ord
+#define type_size(v)          GENERIC_TYPE_ACCESSOR(v)->tp_size
+#define type_nfields(v)       GENERIC_TYPE_ACCESSOR(v)->tp_nfields
+#define type_name(v)          GENERIC_TYPE_ACCESSOR(v)->name
+
 
 #define UNSAFE_GENERICIZE(t,v)		   \
   _Generic((v),                            \
@@ -418,13 +441,13 @@ int rsp_main(int32_t,chr8_t**);
            val_t:ptr(t1,(val_t)v))
 
 // genericize by safe casting
-#define SAFE_GENERICIZE_CAST(t,v,cnvt)	                    \
+#define SAFE_GENERICIZE_ECAST(t,v,cnvt)	                    \
   _Generic((v),                                             \
 	   uchr8_t*:(t)v,                                   \
 	   t:v,                                             \
            val_t:cnvt(__FILE__,__LINE__,__func__,(val_t)v))
 
-#define SAFE_GENERICIZE_CAST2(t1,t2,t3,v,cnvt)		    \
+#define SAFE_GENERICIZE_ECAST2(t1,t2,t3,v,cnvt)		    \
   _Generic((v),                                             \
 	   uchr8_t*(t3)v,                                   \
 	   t1:v,                                            \
@@ -461,7 +484,8 @@ int rsp_main(int32_t,chr8_t**);
 #define isnode(v)      (ntag(v) == NTAG_NODE)
 #define isvec(v)       (ntag(v) == NTAG_VEC)
 #define istable(v)     (ntag(v) == NTAG_TABLE)
-#define isobj(v)       (ntag(v) == VTAG_OBJECT)
+#define isdirect(v)    (ntag(v) == NTAG_DIRECT)
+#define isobj(v)       (ntag(v) == NTAG_OBJECT)
 #define isbool(v)      (vtag(v) == VTAG_BOOL)
 #define ischar(v)      (vtag(v) == VTAG_CHAR)
 #define isint(v)       (vtag(v) == VTAG_INT)
@@ -482,59 +506,60 @@ int rsp_main(int32_t,chr8_t**);
    genericized object accessors - unsafe accessors should only be used in cases where the
    the necessary checks have already been performed.
  */
+
 #define car_(v)             UNSAFE_GENERICIZE2(cons_t*,list_t*,v)->car
 #define cdr_(v)             UNSAFE_GENERICIZE2(cons_t*,list_t*,v)->cdr
-#define car(v)              SAFE_GENERICIZE_CAST2(cons_t*,list_t*,cons_t*,v,topair)->car
-#define cdr(v)              SAFE_GENERICIZE_CAST2(cons_t*,list_t*,cons_t*,v,topair)->cdr
-#define first(v)            SAFE_GENERICIZE_CAST(list_t*,v,tolist)->car
-#define rest(v)             SAFE_GENERICIZE_CAST(list_t*,v,tolist)->cdr
-#define bs_sz(v)            SAFE_GENERICIZE_CAST(bstr_t*,v,tobstr)->size
-#define bs_bytes(v)         SAFE_GENERICIZE_CAST(bstr_t*,v,tobstr)->bytes
-#define sm_name(v)          SAFE_GENERICIZE_CAST(sym_t*,v,tosym)->name
-#define sm_hash(v)          SAFE_GENERICIZE_CAST(sym_t*,v,tosym)->hash
-#define sm_keyword(v)       SAFE_GENERICIZE_CAST(sym_t*,v,tosym)->keyword
-#define sm_reserved(v)      SAFE_GENERICIZE_CAST(sym_t*,v,tosym)->reserved
-#define sm_interned(v)      SAFE_GENERICIZE_CAST(sym_t*,v,tosym)->interned
-#define sm_gensym(v)        SAFE_GENERICIZE_CAST(sym_t*,v,tosym)->gensym
-#define nd_order(v)         SAFE_GENERICIZE_CAST(node_t*,v,tonode)->order
-#define nd_balance(v)       SAFE_GENERICIZE_CAST(node_t*,v,tonode)->balance
+#define car(v)              SAFE_GENERICIZE_ECAST2(cons_t*,list_t*,cons_t*,v,topair)->car
+#define cdr(v)              SAFE_GENERICIZE_ECAST2(cons_t*,list_t*,cons_t*,v,topair)->cdr
+#define first(v)            SAFE_GENERICIZE_ECAST(list_t*,v,tolist)->car
+#define rest(v)             SAFE_GENERICIZE_ECAST(list_t*,v,tolist)->cdr
+#define bs_sz(v)            SAFE_GENERICIZE_ECAST(bstr_t*,v,tobstr)->size
+#define bs_bytes(v)         SAFE_GENERICIZE_ECAST(bstr_t*,v,tobstr)->bytes
+#define sm_name(v)          SAFE_GENERICIZE_ECAST(sym_t*,v,tosym)->name
+#define sm_hash(v)          SAFE_GENERICIZE_ECAST(sym_t*,v,tosym)->hash
+#define sm_keyword(v)       SAFE_GENERICIZE_ECAST(sym_t*,v,tosym)->keyword
+#define sm_reserved(v)      SAFE_GENERICIZE_ECAST(sym_t*,v,tosym)->reserved
+#define sm_interned(v)      SAFE_GENERICIZE_ECAST(sym_t*,v,tosym)->interned
+#define sm_gensym(v)        SAFE_GENERICIZE_ECAST(sym_t*,v,tosym)->gensym
+#define nd_order(v)         SAFE_GENERICIZE_ECAST(node_t*,v,tonode)->order
+#define nd_balance(v)       SAFE_GENERICIZE_ECAST(node_t*,v,tonode)->balance
 #define nd_left_(v)         UNSAFE_GENERICIZE(node_t*,v)->left
 #define nd_right_(v)        UNSAFE_GENERICIZE(node_t*,v)->right
 #define nd_data_(v)         UNSAFE_GENERICIZE(node_t*,v)->nd_data
-#define nd_left(v)          SAFE_GENERICIZE_CAST(node_t*,v,tonode)->left
-#define nd_right(v)         SAFE_GENERICIZE_CAST(node_t*,v,tonode)->right
-#define nd_data(v)          SAFE_GENERICIZE_CAST(node_t*,v,tonode)->nd_data
-#define nd_key(v)           get_nd_key(SAFE_GENERICIZE_CAST(node_t*,v,tonode))
-#define nd_binding(v)       get_nd_binding(SAFE_GENERICIZE_CAST(node_t*,v,tonode))
+#define nd_left(v)          SAFE_GENERICIZE_ECAST(node_t*,v,tonode)->left
+#define nd_right(v)         SAFE_GENERICIZE_ECAST(node_t*,v,tonode)->right
+#define nd_data(v)          SAFE_GENERICIZE_ECAST(node_t*,v,tonode)->nd_data
+#define nd_key(v)           get_nd_key(SAFE_GENERICIZE_ECAST(node_t*,v,tonode))
+#define nd_binding(v)       get_nd_binding(SAFE_GENERICIZE_ECAST(node_t*,v,tonode))
 #define tb_records_(v)      UNSAFE_GENERICIZE(table_t*,v)->records
-#define tb_records(v)       SAFE_GENERICIZE_CAST(table_t*,v,totable)->records
-#define tb_count(v)         SAFE_GENERICIZE_CAST(table_t*,v,totable)->count
-#define tb_order(v)         SAFE_GENERICIZE_CAST(table_t*,v,totable)->order
-#define tb_global(v)        SAFE_GENERICIZE_CAST(table_t*,v,totable)->global
-#define tb_reserved(v)      SAFE_GENERICIZE_CAST(table_t*,v,totable)->reserved
+#define tb_records(v)       SAFE_GENERICIZE_ECAST(table_t*,v,totable)->records
+#define tb_count(v)         SAFE_GENERICIZE_ECAST(table_t*,v,totable)->count
+#define tb_order(v)         SAFE_GENERICIZE_ECAST(table_t*,v,totable)->order
+#define tb_global(v)        SAFE_GENERICIZE_ECAST(table_t*,v,totable)->global
+#define tb_reserved(v)      SAFE_GENERICIZE_ECAST(table_t*,v,totable)->reserved
 #define vec_datasz_(v)      UNSAFE_GENERICIZE(vec_t*,v)->datasz
 #define vec_values_(v)      get_vec_values(UNSAFE_GENERICIZE(vec_t*,v))
-#define vec_datasz(v)       SAFE_GENERICIZE_CAST(vec_t*,v,tovec)->datasz
-#define vec_initsz(v)       SAFE_GENERICIZE_CAST(vec_t*,v,tovec)->initsz
-#define vec_localvals(v)    SAFE_GENERICIZE_CAST(vec_t*,v,tovec)->localvals
-#define vec_dynamic(v)      SAFE_GENERICIZE_CAST(vec_t*,v,tovec)->dynamic
-#define vec_data(v)         SAFE_GENERICIZE_CAST(vec_t*,v,tovec)->data
-#define vec_values(v)       get_vec_values(SAFE_GENERICIZE_CAST(vec_t*,v,tovec))
-#define vec_elements(v)     get_vec_elements(SAFE_GENERICIZE_CAST(vec_t*,v,tovec))
-#define fn_method(v)        SAFE_GENERICIZE_CAST2(method_t*,cprim_t*,func_t*,v,tofunc)->method
-#define fn_cprim(v)         SAFE_GENERICIZE_CAST2(method_t*,cprim_t*,func_t*,v,tofunc)->cprim
-#define fn_argc(v)          SAFE_GENERICIZE_CAST2(method_t*,cprim_t*,func_t*,v,tofunc)->argco
-#define fn_pure(v)          SAFE_GENERICIZE_CAST2(method_t*,cprim_t*,func_t*,v,tofunc)->pure
-#define fn_kwargs(v)        SAFE_GENERICIZE_CAST2(method_t*,cprim_t*,func_t*,v,tofunc)->kwargs
-#define fn_varkw(v)         SAFE_GENERICIZE_CAST2(method_t*,cprim_t*,func_t*,v,tofunc)->varkw
-#define fn_macro(v)         SAFE_GENERICIZE_CAST2(method_t*,cprim_t*,func_t*,v,tofunc)->macro
+#define vec_datasz(v)       SAFE_GENERICIZE_ECAST(vec_t*,v,tovec)->datasz
+#define vec_initsz(v)       SAFE_GENERICIZE_ECAST(vec_t*,v,tovec)->initsz
+#define vec_localvals(v)    SAFE_GENERICIZE_ECAST(vec_t*,v,tovec)->localvals
+#define vec_dynamic(v)      SAFE_GENERICIZE_ECAST(vec_t*,v,tovec)->dynamic
+#define vec_data(v)         SAFE_GENERICIZE_ECAST(vec_t*,v,tovec)->data
+#define vec_values(v)       get_vec_values(SAFE_GENERICIZE_ECAST(vec_t*,v,tovec))
+#define vec_elements(v)     get_vec_elements(SAFE_GENERICIZE_ECAST(vec_t*,v,tovec))
+#define fn_method(v)        SAFE_GENERICIZE_ECAST2(method_t*,cprim_t*,func_t*,v,tofunc)->method
+#define fn_cprim(v)         SAFE_GENERICIZE_ECAST2(method_t*,cprim_t*,func_t*,v,tofunc)->cprim
+#define fn_argc(v)          SAFE_GENERICIZE_ECAST2(method_t*,cprim_t*,func_t*,v,tofunc)->argco
+#define fn_pure(v)          SAFE_GENERICIZE_ECAST2(method_t*,cprim_t*,func_t*,v,tofunc)->pure
+#define fn_kwargs(v)        SAFE_GENERICIZE_ECAST2(method_t*,cprim_t*,func_t*,v,tofunc)->kwargs
+#define fn_varkw(v)         SAFE_GENERICIZE_ECAST2(method_t*,cprim_t*,func_t*,v,tofunc)->varkw
+#define fn_macro(v)         SAFE_GENERICIZE_ECAST2(method_t*,cprim_t*,func_t*,v,tofunc)->macro
 #define meth_code_(v)       UNSAFE_GENERICIZE(method_t*,v)->code
 #define meth_names_(v)      UNSAFE_GENERICIZE(method_t*,v)->names
 #define meth_envt_(v)       UNSAFE_GENERICIZE(method_t*,v)->envt
-#define meth_code(v)        SAFE_GENERICIZE_CAST(method_t*,v,tomethod)->code
-#define meth_names(v)       SAFE_GENERICIZE_CAST(method_t*,v,tomethod)->names
-#define meth_envt(v)        SAFE_GENERICIZE_CAST(method_t*,v,tomethod)->envt
-#define cprim_callable(v)   SAFE_GENERICIZE_CAST(cprim_t*,v,tomethod)->callable
+#define meth_code(v)        SAFE_GENERICIZE_ECAST(method_t*,v,tomethod)->code
+#define meth_names(v)       SAFE_GENERICIZE_ECAST(method_t*,v,tomethod)->names
+#define meth_envt(v)        SAFE_GENERICIZE_ECAST(method_t*,v,tomethod)->envt
+#define cprim_callable(v)   SAFE_GENERICIZE_ECAST(cprim_t*,v,tomethod)->callable
 
 /* error handling macros */
 #define ERRINFO_FMT  "[%s:%i:%s] %s error: "

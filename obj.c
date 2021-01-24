@@ -1,13 +1,28 @@
 #include "rascal.h"
 
 /* memory management and bounds checking */
-static size_t calc_mem_size(size_t nbytes) {
+size_t calc_mem_size(size_t nbytes) {
   size_t basesz = max(nbytes, 16u);
   while (basesz % 16)
     basesz++;
 
   return basesz;
 }
+
+bool gc_check(size_t b, bool aligned)
+{
+  if (!aligned)
+    b = calc_mem_size(b);
+
+  return (FREE + b) >= MAXRAM;
+}
+
+bool in_heap(val_t v, uchr8_t* base, uint64_t heapsz)
+{
+  uptr_t a = addr(v), b = (uptr_t)base, c = (uptr_t)(base + heapsz * 8);
+  return a >= b && a <= c;
+}
+
 
 bool isallocated(val_t v)
 {
@@ -25,11 +40,6 @@ bool isallocated(val_t v)
     default:
       return true;
     }
-}
-
-inline bool gc_check(uint64_t n)
-{
-  return (FREE + n) >= (FROMSPACE + (HEAPSIZE * 8));
 }
 
 uchr8_t* vm_cmalloc(uint64_t nbytes)
@@ -69,7 +79,7 @@ uchr8_t* vm_alloc(size_t bs, size_t extra)
 {
   size_t alloc_size = calc_mem_size(bs + extra);
 
-  if (gc_check(alloc_size))
+  if (gc_check(alloc_size,true))
     gc_run();
   
   uchr8_t* out = FREE;
@@ -93,140 +103,68 @@ size_t vm_allocsz_bytes(type_t* to, size_t argc, val_t* args)
 
 size_t vm_allocsz_copies(type_t* to, size_t argc, val_t* args)
 {
-  
+  return to->tp_base * argc;
+}
+
+size_t vm_allocsz_words(type_t* to, size_t argc, val_t* args)
+{
+  return argc * 8;
 }
 
 // entry point for non-builtin constructors and constructor calls that couldn't be resolved at compile time
 val_t rsp_new(type_t* to, size_t argc, val_t* args)
 {
-  if (to->tp_builtin_p)
+  if (type_builtin_p(to))
     {
-      cprim_t* tnw = to->tp_new;
+      cprim_t* tnw = type_new(to);
       if (tnw->vargs)
 	return tnw->callable.varg_fun(argc,args);
       else
-	return tnw->callable.farg_fun(args);
+	return tnw->callable.n_farg_fun(args);
     }
 
   else
     {
-      size_t allcsz = to->tp_alloc_sz(to,argc,args);
-      uchr8_t* new = vm_alloc(to->tp_base,allcsz);
+      
+      size_t allcsz = type_alloc_sz(to)(type_origin(to),argc,args);
 
-      if (to->tp_vtag == VTAG_OBJECT)
-	  ((val_t*)new)[0] = ((val_t)(to)) | OTAG_OBJECT;
+      uchr8_t* out = vm_alloc(type_base(to), allcsz);
+
+      if (type_vtag(to) == VTAG_OBJECT)
+	  ((val_t*)out)[0] = ((val_t)(to)) | OTAG_OBJECT;
 
       val_t* bs = BASE(args,argc);
-      memcpy(new + 8,(uchr8_t*)bs,(to->tp_fields->count)*8);
+      memcpy(out + 8,(uchr8_t*)bs, type_nfields(to) * 8);
+      argc -= type_nfields(to);
 
-      if (to->tp_init)
-	to->tp_init(new,argc,args);
+      if (type_init(to))
+	type_init(to)(out + type_base(to), argc,args);
 
-      return (val_t)new | to->tp_vtag;
+      return (val_t)out | type_vtag(to);
     }
-}
-
-  uchr8_t* vm_allocs(type_t* to, size_t n, val_t* args)
-{
-  chr8_t* s = tostr(args[0],__FILE__,__LINE__,__func__);
-  return vm_alloc(tp_base(to) + strsz(s));
-}
-
-val_t  vm_inits(type_t* to, val_t new, val_t* args)
-{
-  chr8_t* strf = (chr8_t*)(new + tp_base(to));
-  chr8_t* stra = ptr(chr8_t*,args[0]);
-  strcpy(strf,stra);
-  return new;
-}
-
-uchr8_t* vm_allocb(type_t* to, size_t n, val_t* args)
-{
-  size_t s = uval(args[1]);
-  return vm_alloc(tp_base(to) + s);
-}
-
-val_t  vm_initb(type_t* to, val_t new, val_t* args)
-{
-  uint64_t hdsz = tp_base(to);
-  val_t* sz_field = (val_t*)(new + hdsz);
-  uchr8_t* bts_field = (uchr8_t*)(new + hdsz + 8);
-  *sz_field = uval(args[1]);
-  uchr8_t* bts = ptr(uchr8_t*,args[0]);
-  memcpy(bts_field,bts,*sz_field);
-  return new;
-}
-
-uchr8_t* vm_allocv(type_t* to, size_t n, val_t* args)
-{
-  size_t extra = uval(args[0]);
-  return vm_alloc(tp_base(to) + ((n + extra) * 8));
-}
-
-
-val_t vm_initv(type_t* to,val_t new,size_t n, val_t* args)
-{
-  vm_inito(to,new,args);
-  size_t hdsz = to->tp_ndsz + to->tp_tagged;
-  args += hdsz;
-  n -= hdsz;
-  vec_t* v = (vec_t*)new;
-  val_t* varr = vec_values(v);
-  size_t i;
-  for (i=0;i < n;i++)
-    {
-      varr[i] = args[i];
-    }
-  return new;
-}
-
-
-uchr8_t* vm_allocn(type_t* to, size_t n, val_t* args)
-{
-  return vm_alloc(tp_base(to) * n);
-}
-
-uchr8_t* vm_allocp(type_t* to, size_t n, val_t* args)
-{
-  size_t aligned_base = calc_mem_size(tp_base(to));
-  return vm_alloc(aligned_base + (to->tp_ndsz * n));
 }
 
 // reallocate 
-val_t* vm_realloc(val_t* sz, size_t curr, size_t new)
+val_t* vm_vec_realloc(vec_t* varr, size_t curr, size_t new)
 {
-  uint64_t oldbts = curr * 8;
-  uint64_t newbts = calc_mem_size(new * 8);
-  val_t* out;
-
-  if (gc_check(new))
+  size_t new_sz = new + vec_initsz(varr) + vec_dynamic(varr);
+  size_t old_sz = curr + vec_initsz(varr) + vec_dynamic(varr);
+  
+  val_t* newvals;
+  if (gc_check(new_sz * 8,true))
     {
-      if (GROWHEAP)
-	{
-	  gc_resize();
-	  GROWHEAP = false;
-	}
-      
-      out = (val_t*)TOSPACE;
-      TOFFSET = TOSPACE + newbts;
-      memset(TOSPACE,0,newbts);
-      memcpy(TOSPACE,(uchr8_t*)sz,oldbts);
-      *sz = R_FPTR;
-      sz[1] = (val_t)out;
-      ((val_t*)TOSPACE)[curr+1] = R_FPTR; // mark the end of the new elements
-      gc_run();
+      DPUSH(tagp(varr));
+      newvals = (val_t*)vm_alloc(0,new_sz);
+      varr = ptr(vec_t*,DPOP());
     }
 
-  else
-    {
-      out = (val_t*)FREE;
-      FREE += newbts;
-      memcpy(out,(uchr8_t*)sz,oldbts);
-      *sz = R_FPTR;
-      sz[1] = (val_t)out;
-    }
+  val_t* cvals = vec_values(varr);
+  for (size_t i = 0; i < old_sz; i++)
+    newvals[i] = cvals[i];
 
-  return out;
+  cvals[0] = R_FPTR;
+  cvals[1] = (val_t)newvals;
+  return newvals;
 }
 
 void gc_resize()
@@ -249,17 +187,17 @@ void gc_run() {
       size_t numwords = (val_t*)TOFFSET - TARR;
       for (size_t i = 0; i < numwords && TARR[i] != R_FPTR; i++)
 	{
-	  TARR[i] = gc_trace(TARR[i],LTAG_NONE);
+	  TARR[i] = gc_trace(TARR[i],VTAG_NONE);
 	}
     }
 
   // trace the top level environment
-  R_MAIN = gc_trace(R_MAIN,LTAG_NONE);
+  R_MAIN = gc_trace(R_MAIN,VTAG_NONE);
 
   // trace EVAL, DUMP, and the main registers
-  for (size_t i = 0; i < SP; i++) EVAL[i] = gc_trace(EVAL[i],LTAG_NONE);
-  for (size_t i = 0; i < DP; i++) DUMP[i] = gc_trace(DUMP[i],LTAG_NONE);
-  for (size_t i = 0; i < 4; i++) REGISTERS[i] = gc_trace(REGISTERS[i],LTAG_NONE);
+  for (size_t i = 0; i < SP; i++) EVAL[i] = gc_trace(EVAL[i],VTAG_NONE);
+  for (size_t i = 0; i < DP; i++) DUMP[i] = gc_trace(DUMP[i],VTAG_NONE);
+  for (size_t i = 0; i < 4; i++) REGISTERS[i] = gc_trace(REGISTERS[i],VTAG_NONE);
 
   // swap the fromspace & the tospace
   uchr8_t* TMPHEAP = FROMSPACE;
@@ -282,20 +220,20 @@ uchr8_t* gc_reserve(val_t v)
 
 val_t gc_copy(type_t* tp, val_t v, uchr8_t* to)
 {
-  size_t sz = tp->tp_size ? tp->tp_size(v) : tp_base(tp);
+  size_t sz = type_size(tp) ? type_size(tp)(v) : type_base(tp);
   size_t asz = calc_mem_size(sz);
   uchr8_t* frm = ptr(uchr8_t*,v);
-  memcpy(frm,to,asz);
+  memcpy(to,frm,asz);
   val_t out = (val_t)frm;
   // install the forwarding pointer
   car_(frm) = R_FPTR;
-  cdr_(frm) = tag_p(out,tp->tp_ltag);
+  cdr_(frm) = out | type_vtag(tp);
   return out;
 }
 
-val_t gc_trace(val_t v, ltag_t t)
+val_t gc_trace(val_t v, vtag_t t)
 {
-  if (!isallocated(v) || in_heap(v,(val_t*)TOSPACE,HEAPSIZE)) return v;
+  if (!isallocated(v) || in_heap(v,TOSPACE,HEAPSIZE * 8)) return v;
   else if (isfptr(car_(v)))
     {
       return trace_fp(v);
@@ -304,7 +242,7 @@ val_t gc_trace(val_t v, ltag_t t)
   else
     {
       bool return_tagged;
-      if (t == LTAG_NONE)
+      if (t == VTAG_NONE)
 	{
 	  return_tagged = true;
 	}
@@ -317,42 +255,44 @@ val_t gc_trace(val_t v, ltag_t t)
 
       uchr8_t* new_spc = gc_reserve(v);
       val_t new_val, * varr; size_t elcnt;
-      type_t* to = val_type(v); uint64_t* offsets;
+      type_t* to = val_type(v);
 
       switch (t)
 	{
-	 case LTAG_OBJECT:
-	   varr = ptr(val_t*,v); offsets = to->tp_foffsets;
-	   for (size_t i = 0; i < to->tp_nfields; i++)
-	     {
-	       varr[offsets[i]] = gc_trace(varr[offsets[i]],LTAG_NONE);
-	     }
+	 case VTAG_OBJECT:
+	   varr = ptr(val_t*,v);
+	   for (size_t i = 1; i <= type_nfields(to); i++)
+	       varr[i] = gc_trace(varr[i],VTAG_NONE);
 	   break;
-	 case LTAG_NODE:	   
-	   nd_left_(v) = (node_t*)gc_trace((val_t)nd_left_(v),LTAG_NODE);
-	   nd_right_(v) = (node_t*)gc_trace((val_t)nd_right_(v),LTAG_NODE);
-	   nd_data_(v) = gc_trace(nd_data_(v),LTAG_NONE);
+
+	 case VTAG_NODE:	   
+	   nd_left_(v) = (node_t*)gc_trace((val_t)nd_left_(v),VTAG_NODE);
+	   nd_right_(v) = (node_t*)gc_trace((val_t)nd_right_(v),VTAG_NODE);
+	   nd_data_(v) = gc_trace(nd_data_(v),VTAG_NONE);
 	   break;
-	 case LTAG_CONS:
-	 case LTAG_LIST:
-	   car_(v) = gc_trace(car_(v),LTAG_NONE);
-	   cdr_(v) = gc_trace(cdr_(v),LTAG_NONE);
+
+	 case VTAG_CONS:
+	 case VTAG_LIST:
+	   car_(v) = gc_trace(car_(v),VTAG_NONE);
+	   cdr_(v) = gc_trace(cdr_(v),VTAG_NONE);
 	   break;
-	 case LTAG_TABLE:
-	   tb_records_(v) = (node_t*)gc_trace((val_t)tb_records_(v),LTAG_NODE);
+
+	 case VTAG_TABLE:
+	   tb_records_(v) = (node_t*)gc_trace((val_t)tb_records_(v),VTAG_NODE);
 	   break;
-	 case LTAG_VEC:
+
+	 case VTAG_VEC:
 	   varr = vec_values_(v); elcnt = vec_datasz_(v);
 	   for (size_t i = 0;i < elcnt; i++)
-	     {
-	       varr[i] = gc_trace(varr[i],LTAG_NONE);
-	     }
+	     varr[i] = gc_trace(varr[i],VTAG_NONE);
+	   
 	   break;
-	 case LTAG_METHOD:
-	   meth_code_(v) = (vec_t*)gc_trace((val_t)meth_code_(v),LTAG_VEC);
-	   meth_names_(v) = (table_t*)gc_trace((val_t)meth_names_(v),LTAG_TABLE);
-	   meth_envt_(v) = (vec_t*)gc_trace((val_t)meth_envt_(v),LTAG_VEC);
+	 case VTAG_METHOD:
+	   meth_code_(v) = (vec_t*)gc_trace((val_t)meth_code_(v),VTAG_VEC);
+	   meth_names_(v) = (table_t*)gc_trace((val_t)meth_names_(v),VTAG_TABLE);
+	   meth_envt_(v) = (vec_t*)gc_trace((val_t)meth_envt_(v),VTAG_VEC);
 	   break;
+
 	default:
 	  break;
 	}
@@ -362,24 +302,15 @@ val_t gc_trace(val_t v, ltag_t t)
     }
 }
 
-
 inline val_t* get_vec_values(vec_t* v)   { return vec_localvals(v) ? &(vec_data(v)) : (val_t*)(vec_data(v)) ; }
 inline val_t* get_vec_elements(vec_t* v) { return get_vec_values(v) + vec_dynamic(v) + vec_initsz(v) ; }
 
 
-/*
-// simple limit checks
-bool in_heap(val_t v, val_t* base, uint64_t heapsz)
-{
-  uptr_t a = addr(v), b = (uptr_t)base, c = (uptr_t)(base + heapsz);
-  return a >= b && a <= c;
-}
 
-// specialized accessors
 inline val_t get_nd_key(node_t* n)
 {
   val_t d = nd_data(n);
-  return iscons(d) ? ptr(val_t*,d)[0] : d;
+  return iscons(d) ? car_(d) : d;
 }
 
 inline val_t get_nd_binding(node_t* n)
@@ -388,26 +319,345 @@ inline val_t get_nd_binding(node_t* n)
   return iscons(d) ? ptr(val_t*,d)[1] : d;
 }
 
-inline list_t* new_list(int cnt) { return cnt == 0 ? NULL : (list_t*)rsp_allocw(cnt*2) ; }
-inline cons_t* new_cons() { return (cons_t*)rsp_allocw(2); }
-inline char* new_str(int ssz) { return (char*)rsp_alloc(ssz) ; }
 
-sym_t* new_sym(int ssz, uchr8_t** mem)
+list_t* mk_list(bool stacked, size_t argc, ...)
 {
-  
-  uchr8_t* m;
-  if (mem)
-    {
-      m = *mem;
-      *mem += calc_mem_size(8+ssz);
-    }
+  if (!argc)
+    return (list_t*)(R_NIL);
+
+  val_t* stk;
+  va_list vargs;
+  va_start(vargs,argc);
+  if (stacked)
+    stk = va_arg(vargs,val_t*);
+
   else
     {
-      m = rsp_alloc(8+ssz);
+      val_t offset = stk_reserve(&DUMP,&DP,&DUMPSIZE,argc);
+      stk = DUMP + offset;
+
+      for (size_t i = 0; i < argc; i++)
+	stk[i] = va_arg(vargs,val_t);
     }
+  va_end(vargs);
   
-  return (sym_t*)m;
+  val_t out = rsp_new_list(argc,stk);
+
+  DPOPN(argc);
+
+  return (list_t*)out;
 }
+
+val_t rsp_new_list(size_t argc, val_t* args)
+{
+  uchr8_t* out = vm_alloc(0,16 * argc);
+  cons_t* curr = (cons_t*)out;
+  size_t i;
+
+  for (i = 0; i < argc - 1; i++, curr++)
+    {
+      car_(curr) = args[i];
+      cdr_(curr) = (val_t)(curr + 1);
+    }
+
+  car_(out) = args[i];
+  cdr_(out) = 0;
+  return (val_t)out;
+}
+
+cons_t* mk_cons(val_t ca, val_t cd)
+{
+  uchr8_t* hd;
+
+  if (gc_check(16,true))
+    {
+      val_t base = DPUSHN(2,ca,cd);
+      hd = vm_alloc(0,16);
+      ca = DUMP[base];
+      cd = DUMP[base+1];
+      DPOPN(2);
+    }
+
+  else
+    hd = vm_alloc(0,16);
+
+  cons_t* out = (cons_t*)hd;
+  car_(hd) = ca;
+  cdr_(hd) = cd;
+
+  return out;
+}
+
+val_t rsp_new_cons(val_t ca, val_t cd)
+{
+  cons_t* c = mk_cons(ca,cd);
+
+  if (islist(cdr_(c)))
+    return (val_t)c;
+
+  else
+    return tagp(c);
+
+}
+
+
+rstr_t* mk_str(chr8_t* s)
+{
+  size_t b = strsz(s);
+  size_t t = calc_mem_size(b);
+  uchr8_t* new;
+
+  if (in_heap((val_t)s,FROMSPACE,HEAPSIZE) && gc_check(t,true))
+    {
+      DPUSH(tagp(s));
+      new = vm_alloc(0,b);
+      s = ptr(chr8_t*,DPOP());
+    }
+
+  else
+    new = vm_alloc(0,b);
+
+  strcpy((chr8_t*)new,s);
+  return (chr8_t*)new;
+}
+
+
+val_t rsp_new_str(val_t a)
+{
+  vtag_t t = vtag(a);
+  rstr_t* out;
+  size_t csz;
+  chr8_t buff[128];
+  
+  switch (t)
+    {
+      case VTAG_STR:
+	out = mk_str(ptr(rstr_t*,a));
+	break;
+
+     case VTAG_SYM:
+       out = mk_str(sm_name(a));
+       break;
+
+     case VTAG_INT:
+       sprintf(buff,"%d",ival(a));
+       out = mk_str(buff);
+       break;
+
+     case VTAG_FLOAT:
+       sprintf(buff,"%.2f",fval(a));
+       out = mk_str(buff);
+       break;
+
+     case VTAG_CHAR:
+       csz = wctomb(buff,ival(a));
+       buff[csz] = 0;
+       out = mk_str(buff);
+       break;
+
+     default:
+       rsp_perror(TYPE_ERR,"[%s:%d:%s] %s error: no method to convert string from type %s", type_name(a));
+       rsp_raise(TYPE_ERR);
+       break;
+    }
+
+  return tagp(out);
+}
+
+bstr_t* mk_bstr(size_t nb, uchr8_t* b)
+{
+  bstr_t* out = (bstr_t*)vm_alloc(8,nb);
+  bs_sz(out) = nb;
+  memcpy(bs_bytes(out),b,nb);
+  return out;
+}
+
+val_t rsp_new_bstr(size_t argc, val_t* args)
+{
+  rstr_t* srcstr, *buffer; size_t sz; uint8_t fill;
+  bstr_t* out;
+
+  switch (argc)
+    {
+    case 1:
+      srcstr = ecall(tostr,args[0]);
+      sz = strsz(srcstr);
+      buffer = (chr8_t*)vm_cmalloc(sz);
+      memcpy(buffer,srcstr,sz);
+      break;
+
+    case 2: default:
+      sz = ecall(toint,args[0]);
+      fill = ecall(toint,args[1]);
+      buffer = (chr8_t*)vm_cmalloc(sz);
+      memset(buffer,fill,sz);
+      break;
+    }
+
+  out = mk_bstr(sz,(uchr8_t*)buffer);
+  vm_cfree((uchr8_t*)buffer);
+
+  return tagp(out);
+}
+
+
+iostrm_t* mk_iostrm(chr8_t* fname, chr8_t* fmode)
+{
+  iostrm_t* out = fopen(fname,fmode);
+
+  if (!out)
+    {
+      rsp_perror(IO_ERR,"[%s:%d:%s] %s error: %s", strerror(errno));
+      errno = 0;
+      rsp_raise(IO_ERR);
+    }
+
+  return out;
+}
+
+val_t rsp_new_iostrm(size_t argc, val_t* args)
+{
+  chr8_t* fmode, *fname;
+
+  fname = strval(args[0]);
+
+  if (argc == 2)
+    fmode = strval(args[1]);
+
+  else
+    fmode = "r+";
+
+  iostrm_t* out = mk_iostrm(fname,fmode);
+  return tagp(out);
+
+}
+
+sym_t* mk_gensym(chr8_t* sn, size_t ssz, int32_t fl)
+{
+  static int32_t GS_COUNTER = 0;
+  chr8_t* gsbuf = alloca(46+ssz);
+
+  if (ssz)
+    sprintf(gsbuf,"__GS__%d__%s",GS_COUNTER,sn);
+  else
+    sprintf(gsbuf,"__GS__%d",GS_COUNTER);
+
+  h = hash_str(gsbuf);
+  
+  
+}
+
+sym_t* mk_sym(chr8_t* sn, size_t ssz, hash32_t h, int32_t fl, bool authority)
+{
+  sym_t* out;
+
+  if (authority)
+    goto mk_new_sym;
+  
+  if (ssz == 0)
+    ssz = strsz(sn);
+
+  if (fl & SMFL_GENSYM)
+    return mk_gensym(sn,ssz,fl);
+
+  if (nextu8(sn) == U':')
+    fl |= SMFL_KEYWORD;
+
+  if (fl & SMFL_GENSYM)
+    {
+
+      if (sn)
+	sprintf(gsbuf,"__GENSYM__%d",GS_COUNTER);
+      else
+	sprintf(gsbuf,"__GENSYM__%d__%s",GS_COUNTER,sn);
+
+      GS_COUNTER++;
+      
+    }
+
+  if (!h)
+    h = hash_str(sn);
+
+  if (fl & SMFL_INTERNED)
+    {
+      return table_intern(ptr(symtab_t*,R_SYMTAB),sn,);
+    }
+
+  else
+    goto mk_new_sym;
+
+ mk_new_sym:
+  if (in_heap((val_t)sn,FROMSPACE,HEAPSIZE) && gc_check(8+ssz,false))
+    {
+      DPUSH(tagp(sn));
+      out = (sym_t*)vm_alloc(8, ssz);
+      sn = ptr(chr8_t*,DPOP());
+    }
+  else
+    out = (sym_t*)vm_alloc(8,ssz);
+
+  ((val_t*)out)[0] = ((val_t)h << 32) | fl;
+  
+}
+
+
+val_t mk_sym(const char* s, int flags) {
+  static int GS_COUNTER = 0;
+
+  if (flags)
+    {
+      char gsbuf[74+strsz(s)];
+      sprintf(gsbuf,"__GENSYM__%d__%s",GS_COUNTER,s);
+      h = hash_str(gsbuf);
+      ssz = strsz(gsbuf);
+      GS_COUNTER++;
+
+      if (flags & SYMFLAG_INTERNED) return intern_string(R_SYMTAB,gsbuf,h,flags);
+      else
+	{
+	  sym_t* new_s = new_sym(8+ssz,NULL);
+	  init_sym(new_s,s,h,flags);
+	  return tag_p(new_s,LTAG_SYM);
+	}
+  }
+
+  h = hash_str(s);
+  ssz = strsz(s);
+
+  if (flags & SYMFLAG_INTERNED) return intern_string(R_SYMTAB,s,h,flags);
+  else
+    {
+      sym_t* new_s = new_sym(8+ssz,NULL);
+      init_sym(new_s,s,h,flags);
+      return tag_p(new_s,LTAG_SYM);
+    }
+}
+
+
+val_t     rsp_new_sym(size_t,val_t*);
+val_t     rsp_cnvt_sym(size_t,val_t*);
+method_t* mk_meth(table_t*,vec_t*,vec_t*,uint64_t);       // local names, bytecode, closure, flags
+cprim_t*  mk_cprim(rcfun_t,size_t,uint64_t);              // callable, argcount, flags
+vec_t*    mk_vec(otag_t,uint64_t,bool,size_t,...);        // otag, flags, whether the arguments are already stacked, and argcount
+val_t     rsp_new_vec(size_t,val_t*);
+node_t*   mk_node(size_t,val_t,bool);                     // order, hashkey, and whether to allocate space for bindings
+table_t*  mk_table(bool,otag_t,size_t,...);
+val_t     rsp_new_table(val_t*,int32_t);
+val_t     mk_bool(int32_t);
+val_t     rsp_new_bool(val_t*);
+val_t     mk_char(int32_t);
+val_t     rsp_new_char(val_t*);
+val_t     mk_int(int32_t);
+val_t     rsp_new_int(val_t*);
+val_t     mk_float(flt32_t);
+val_t     rsp_new_float(val_t*);
+type_t*   mk_type(type_t*,size_t,...);              // mk_type is only called for extension types, so they require a parent (the default is 'object')            
+val_t     rsp_new_type(type_t*,size_t,val_t*);
+
+
+
+
+/*
 
 
 inline node_t* new_node(int nb, uchr8_t** mem)
@@ -501,34 +751,6 @@ int init_list(val_t new, val_t* stk, int argc) {
   return 0;
 }
 
-int init_sym(sym_t* s, const char* sn, hash64_t h, int fl)
-{
-  symhash_(s) = h | fl;
-  memcpy(symname_(s),sn,strsz(sn));
-  return 0;
-}
-
-inline int init_str(char* sv, const char* sn)
-{
-  memcpy(sv,sn,strsz(sn));
-  return 0;
-}
-
-inline val_t mk_list(int cnt) { return cnt == 0 ? R_NIL : tag_p(rsp_allocw(cnt * 2), LTAG_LIST); }
-
-inline val_t mk_cons(val_t ca, val_t cd) {
-  PUSH(ca);
-  PUSH(cd);
-  cons_t* new = new_cons();
-  cdr_(new) = POP();
-  car_(new) = POP();
-  return islist(cd) ? tag_p(new,LTAG_LIST) : tag_p(new,LTAG_CONS);
-}
-
-
-inline val_t mk_cfile(FILE* f) { return tag_p(f,LTAG_CFILE); }
-
-
 inline val_t mk_table(int cnt, int rsz)
 { table_t* newtb = new_table(cnt,rsz);
   count_(newtb) = 0;
@@ -603,41 +825,6 @@ val_t mk_dvec(int elements)
   dvec_t* out = new_dvec(elements);
   dvec_curr_(out) = 0;
   return tag_p(out,LTAG_DVEC);
-}
-
-val_t mk_sym(const char* s, int flags) {
-  static int GS_COUNTER = 0;
-  hash64_t h;
-  size_t ssz;
-  if (nextu8(s) == U':') flags |= SYMFLAG_KEYWORD;
-
-  if (flags & SYMFLAG_GENSYM)
-    {
-      char gsbuf[74+strsz(s)];
-      sprintf(gsbuf,"__GENSYM__%d__%s",GS_COUNTER,s);
-      h = hash_str(gsbuf);
-      ssz = strsz(gsbuf);
-      GS_COUNTER++;
-
-      if (flags & SYMFLAG_INTERNED) return intern_string(R_SYMTAB,gsbuf,h,flags);
-      else
-	{
-	  sym_t* new_s = new_sym(8+ssz,NULL);
-	  init_sym(new_s,s,h,flags);
-	  return tag_p(new_s,LTAG_SYM);
-	}
-  }
-
-  h = hash_str(s);
-  ssz = strsz(s);
-
-  if (flags & SYMFLAG_INTERNED) return intern_string(R_SYMTAB,s,h,flags);
-  else
-    {
-      sym_t* new_s = new_sym(8+ssz,NULL);
-      init_sym(new_s,s,h,flags);
-      return tag_p(new_s,LTAG_SYM);
-    }
 }
 
 
