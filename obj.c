@@ -1,5 +1,17 @@
 #include "rascal.h"
 
+/* module-internal declarations */
+node_t*  node_search(node_t*,val_t);
+int32_t  node_insert(node_t**,node_t**,val_t);
+int32_t  node_intern(node_t**,node_t**,chr8_t*,hash32_t);
+int32_t  node_delete(node_t*,val_t);
+node_t*  node_balance(node_t*);
+node_t*  rotate_ll(node_t*,node_t*);
+node_t*  rotate_rr(node_t*,node_t*);
+node_t*  rotate_lr(node_t*,node_t*);
+node_t*  rotate_rl(node_t*,node_t*);
+
+
 /* memory management and bounds checking */
 size_t calc_mem_size(size_t nbytes) {
   size_t basesz = max(nbytes, 16u);
@@ -14,7 +26,7 @@ bool gc_check(size_t b, bool aligned)
   if (!aligned)
     b = calc_mem_size(b);
 
-  return (FREE + b) >= MAXRAM;
+  return (FREE + b) >= (FROMSPACE + (HEAPSIZE * 8));
 }
 
 bool in_heap(val_t v, uchr8_t* base, uint64_t heapsz)
@@ -101,15 +113,9 @@ size_t vm_allocsz_bytes(type_t* to, size_t argc, val_t* args)
     return n;
 }
 
-size_t vm_allocsz_copies(type_t* to, size_t argc, val_t* args)
-{
-  return to->tp_base * argc;
-}
+size_t vm_allocsz_copies(type_t* to, size_t argc, val_t* args) { return to->tp_base * argc; }
 
-size_t vm_allocsz_words(type_t* to, size_t argc, val_t* args)
-{
-  return argc * 8;
-}
+inline size_t vm_allocsz_words(type_t* to, size_t argc, val_t* args) { return argc * 8; }
 
 // entry point for non-builtin constructors and constructor calls that couldn't be resolved at compile time
 val_t rsp_new(type_t* to, size_t argc, val_t* args)
@@ -125,20 +131,19 @@ val_t rsp_new(type_t* to, size_t argc, val_t* args)
 
   else
     {
-      
-      size_t allcsz = type_alloc_sz(to)(type_origin(to),argc,args);
+      // get the total object size and allocate joined space, initialize the portion for the current type
+      // and pass remaining arguments to the builtin initializer
+      size_t tp_base = type_base(to), tp_nfields = type_nfields(to), sub_argc = argc - tp_nfields;
+      val_t* sub_args = args + tp_nfields;
 
-      uchr8_t* out = vm_alloc(type_base(to), allcsz);
+      size_t allcsz = type_alloc_sz(to)(type_origin(to),sub_argc, sub_args);
 
-      if (type_vtag(to) == VTAG_OBJECT)
-	  ((val_t*)out)[0] = ((val_t)(to)) | OTAG_OBJECT;
+      uchr8_t* out = vm_alloc(tp_base, allcsz), *sub_out = out + tp_base;
+      ((val_t*)out)[0] = ((val_t)(to)) | OTAG_OBJECT;
 
-      val_t* bs = BASE(args,argc);
-      memcpy(out + 8,(uchr8_t*)bs, type_nfields(to) * 8);
-      argc -= type_nfields(to);
+      memcpy(out + 8,(uchr8_t*)args, tp_base);
 
-      if (type_init(to))
-	type_init(to)(out + type_base(to), argc,args);
+      type_init(to)(sub_out, sub_argc, sub_args);
 
       return (val_t)out | type_vtag(to);
     }
@@ -532,110 +537,288 @@ val_t rsp_new_iostrm(size_t argc, val_t* args)
 
 }
 
+sym_t* vm_new_sym(chr8_t* sn, size_t ssz, hash32_t h, int32_t fl)
+{
+  sym_t* out;
+
+  if (in_heap((val_t)sn,FROMSPACE,HEAPSIZE) && gc_check(8 + ssz,false))
+    {
+      DPUSH(tagp(sn));
+      out = (sym_t*)vm_alloc(8,ssz);
+      sn = ptr(chr8_t*,DPOP());
+    }
+
+  else
+    out = (sym_t*)vm_alloc(8,ssz);
+
+  ((val_t*)out)[0] = ((val_t)h) | fl;
+  strcpy(sn,sm_name(out));
+
+  return out;
+}
+
 sym_t* mk_gensym(chr8_t* sn, size_t ssz, int32_t fl)
 {
   static int32_t GS_COUNTER = 0;
-  chr8_t* gsbuf = alloca(46+ssz);
+  chr8_t gsbuf[ssz+46];
+  sym_t* out;
 
   if (ssz)
     sprintf(gsbuf,"__GS__%d__%s",GS_COUNTER,sn);
   else
     sprintf(gsbuf,"__GS__%d",GS_COUNTER);
 
-  h = hash_str(gsbuf);
-  
-  
+  GS_COUNTER++;
+
+  hash32_t h = hash_str(gsbuf);
+
+  if (fl & SMFL_INTERNED)
+    out = intern_string(gsbuf,ssz,h,fl);
+
+  else
+    out = vm_new_sym(gsbuf,ssz,h,fl);
+
+  return out;
 }
 
-sym_t* mk_sym(chr8_t* sn, size_t ssz, hash32_t h, int32_t fl, bool authority)
+sym_t* mk_sym(chr8_t* sn, int32_t fl)
 {
-  sym_t* out;
-
-  if (authority)
-    goto mk_new_sym;
+  size_t ssz = strsz(sn);
   
-  if (ssz == 0)
-    ssz = strsz(sn);
-
   if (fl & SMFL_GENSYM)
     return mk_gensym(sn,ssz,fl);
 
-  if (nextu8(sn) == U':')
-    fl |= SMFL_KEYWORD;
-
-  if (fl & SMFL_GENSYM)
-    {
-
-      if (sn)
-	sprintf(gsbuf,"__GENSYM__%d",GS_COUNTER);
-      else
-	sprintf(gsbuf,"__GENSYM__%d__%s",GS_COUNTER,sn);
-
-      GS_COUNTER++;
-      
-    }
-
-  if (!h)
-    h = hash_str(sn);
+  hash32_t h = hash_str(sn);
+  sym_t* out;
 
   if (fl & SMFL_INTERNED)
-    {
-      return table_intern(ptr(symtab_t*,R_SYMTAB),sn,);
-    }
+    out = intern_string(sn,ssz,h,fl);
 
   else
-    goto mk_new_sym;
+    out = vm_new_sym(sn,ssz,h,fl);
 
- mk_new_sym:
-  if (in_heap((val_t)sn,FROMSPACE,HEAPSIZE) && gc_check(8+ssz,false))
-    {
-      DPUSH(tagp(sn));
-      out = (sym_t*)vm_alloc(8, ssz);
-      sn = ptr(chr8_t*,DPOP());
-    }
-  else
-    out = (sym_t*)vm_alloc(8,ssz);
-
-  ((val_t*)out)[0] = ((val_t)h << 32) | fl;
-  
+  return out;
 }
 
 
-val_t mk_sym(const char* s, int flags) {
-  static int GS_COUNTER = 0;
+sym_t* intern_string(chr8_t* sn, size_t ssz, hash32_t h, int32_t fl)
+{
 
-  if (flags)
+  if (in_heap((val_t)sn,FROMSPACE,HEAPSIZE) && gc_check(8 + ssz + 32,false))
     {
-      char gsbuf[74+strsz(s)];
-      sprintf(gsbuf,"__GENSYM__%d__%s",GS_COUNTER,s);
-      h = hash_str(gsbuf);
-      ssz = strsz(gsbuf);
-      GS_COUNTER++;
+      DPUSH(tagp(sn));
+      gc_run();
+      sn = ptr(chr8_t*,DPOP());
+    }
 
-      if (flags & SYMFLAG_INTERNED) return intern_string(R_SYMTAB,gsbuf,h,flags);
-      else
-	{
-	  sym_t* new_s = new_sym(8+ssz,NULL);
-	  init_sym(new_s,s,h,flags);
-	  return tag_p(new_s,LTAG_SYM);
-	}
-  }
+  symtab_t* st = ecall(tosymtab,R_SYMTAB);
+  node_t** records = &tb_records(st), *rslt;
+  sym_t* out;
+  
+  node_intern(records,&rslt,sn,h);
 
-  h = hash_str(s);
-  ssz = strsz(s);
+  if (nd_data(rslt) == R_UNBOUND)
+    {
+      out = vm_new_sym(sn,ssz,h,fl);
+      nd_data(rslt) = tagp(out);
+    }
 
-  if (flags & SYMFLAG_INTERNED) return intern_string(R_SYMTAB,s,h,flags);
   else
     {
-      sym_t* new_s = new_sym(8+ssz,NULL);
-      init_sym(new_s,s,h,flags);
-      return tag_p(new_s,LTAG_SYM);
+      out = ptr(sym_t*,nd_data(rslt));
+      nd_order(rslt) = tb_order(st);
+      tb_order(st)++;
     }
+
+  return out;
+}
+
+// add a node to an AVL tree, rebalancing if needed
+node_t* node_search(node_t* n, val_t x)
+{
+  while (n)
+    {
+      int32_t result = vm_ord(x,nd_key(n));
+
+      if (result < 0)
+	n = nd_left(n);
+
+      else if (result > 0)
+	n = nd_right(n);
+
+      else break;
+    }
+
+  return n;
+}
+
+int32_t node_insert(node_t** rt, node_t** new, val_t hk)
+{
+  if (!(*rt)) // empty tree
+    {
+      
+      node_t* new_nd = new_node(nsz,&m);
+      hashkey_(new_nd) = hk;
+      *rt = new_nd;
+      if (new) *new = new_nd;
+      return 1;
+    }
+
+  else
+    {
+      int comp = vm_ord(hk,hashkey_(*rt)), result;
+      if (comp < 0)
+	{
+	  result = node_insert(&left_(*rt),new,hk,order,nsz,m);
+	  balance_(*rt) -= result;
+	}
+      else if (comp > 0)
+	{
+	  result = node_insert(&right_(*rt),new,hk,order,nsz,m);
+	  balance_(*rt) += result;
+	}
+      else
+	{
+	  if (new) *new = *rt;
+	  return 0;
+	}
+
+      if (unbalanced(*rt)) balance_node(rt);
+      return result;
+    }
+}
+
+
+int node_intern(node_t** rt, node_t** sr, char* sn, hash32_t h)
+{
+  if (!(*rt)) // empty tree
+    {
+      node_t* new_nd = (node_t*)vm_alloc(32,0);
+      nd_balance(new_nd) = 0;
+      nd_data(new_nd) = R_UNBOUND;
+      nd_left(new_nd) = nd_right(new_nd) = NULL;
+      *rt = new_nd;
+      *sr = new_nd;
+      return 1;
+    }
+
+  else
+    {
+      sym_t* s = ptr(sym_t*,nd_data(*rt));
+      int32_t result, b, comp = ordhash(h,sm_hash(s)) || u8strcmp(sn,sm_name(s));
+      if (comp < 0)
+	{
+	  result = node_intern(&nd_left(*rt),sr,sn,h);
+	  b = -1;
+	}
+      else if (comp > 0)
+	{
+	  result = node_intern(&nd_right(*rt),sr,sn,h);
+	  b = 1;
+	}
+      else
+	{
+	  return 0;
+	}
+
+      b *= result;
+      
+      if (unbalanced(*rt)) balance_node(rt);
+      return result;
+    }
+}
+
+int node_delete(node_t** rt, val_t x)
+{
+  if (!(*rt)) // empty tree
+    {
+      return 0;
+    }
+
+  else
+    {
+      int comp = vm_ord(x,hashkey_(*rt)), result;
+      if (comp < 0)
+	{
+	  result = node_delete(&left_(*rt),x);
+	  balance_(*rt) += result;
+	}
+      else if (comp > 0)
+	{
+	  result = node_delete(&right_(*rt),x);
+	  balance_(*rt) -= result;
+	}
+      else
+	{
+	  *rt = NULL;                    // unhook the node from the tree
+	  return 1;
+	}
+
+      if (unbalanced(*rt)) balance_node(rt);
+      return result;
+    }
+}
+
+void balance_node(node_t** rt)
+{
+  node_t* tmpx = *rt, *tmpy;             // the two nodes to be rebalanced
+  if (right_heavy(tmpx))                 // right-heavy case
+    {
+      tmpy = right_(tmpx);
+      if (!left_heavy(tmpy)) *rt = rotate_ll(tmpx,tmpy);
+
+      else *rt = rotate_lr(tmpx,tmpy); 
+    }                                   
+  else
+    {
+      tmpy = left_(tmpx);
+      if (!right_heavy(tmpy)) *rt = rotate_rr(tmpx,tmpy);
+
+      else *rt = rotate_rl(tmpx,tmpy);
+    }
+
+  return;
+}
+
+node_t* rotate_ll(node_t* x, node_t* y)
+{
+  node_t* out = y;
+  right_(x) = left_(y);
+  left_(y) = x;
+  // recalculate balance for x and y
+  balance_(x) = balance_factor(x);
+  balance_(y) = balance_factor(y);
+
+  // return the new root
+  return out;
+}
+
+node_t* rotate_rr(node_t* x, node_t* y)
+{
+  node_t* out = y;
+  left_(x) = right_(y);
+  right_(y) = x;
+  // recalculate balance for x and y
+  balance_(x) = balance_factor(x);
+  balance_(y) = balance_factor(y);
+  // return the new root
+  return out;
+}
+
+
+node_t* rotate_lr(node_t* x, node_t* y)
+{
+  node_t* z = rotate_rr(y,nd_left(y));
+  return rotate_ll(x,z);
+}
+
+node_t* rotate_rl(node_t*x, node_t* y) {
+  node_t* z = rotate_ll(y,right_(y));
+  return rotate_rr(x,z);
 }
 
 
 val_t     rsp_new_sym(size_t,val_t*);
-val_t     rsp_cnvt_sym(size_t,val_t*);
 method_t* mk_meth(table_t*,vec_t*,vec_t*,uint64_t);       // local names, bytecode, closure, flags
 cprim_t*  mk_cprim(rcfun_t,size_t,uint64_t);              // callable, argcount, flags
 vec_t*    mk_vec(otag_t,uint64_t,bool,size_t,...);        // otag, flags, whether the arguments are already stacked, and argcount
@@ -942,202 +1125,6 @@ val_t _cdr(val_t c, const char* fl, int ln, const char* fnm) {
     }
 
   return R_NONE;
-}
-
-inline int balance_factor(node_t* n)
-{
-  if (!n) return 3;
-  int b = 3;
-  if (left_(n)) b -= balance_(left_(n));
-  if (right_(n)) b += balance_(right_(n));
-  return b;
-}
-
-// add a node to an AVL tree, rebalancing if needed
-node_t* node_search(node_t* n, val_t x)
-{
-  while (n)
-    {
-      int result = vm_ord(x,hashkey_(n));
-      if (result < 0) n = left_(n);
-      else if (result > 0) n = right_(n);
-      else break;
-    }
-
-  return n;
-}
-
-int node_insert(node_t** rt, node_t** new, val_t hk, int order, int nsz, uchr8_t* m)
-{
-  if (!(*rt)) // empty tree
-    {
-      
-      node_t* new_nd = new_node(nsz,&m);
-      hashkey_(new_nd) = hk;
-      *rt = new_nd;
-      if (new) *new = new_nd;
-      return 1;
-    }
-
-  else
-    {
-      int comp = vm_ord(hk,hashkey_(*rt)), result;
-      if (comp < 0)
-	{
-	  result = node_insert(&left_(*rt),new,hk,order,nsz,m);
-	  balance_(*rt) -= result;
-	}
-      else if (comp > 0)
-	{
-	  result = node_insert(&right_(*rt),new,hk,order,nsz,m);
-	  balance_(*rt) += result;
-	}
-      else
-	{
-	  if (new) *new = *rt;
-	  return 0;
-	}
-
-      if (unbalanced(*rt)) balance_node(rt);
-      return result;
-    }
-}
-
-
-int node_intern(node_t** rt, val_t* sr, char* sn, hash64_t h, int fl, int order)
-{
-  if (!(*rt)) // empty tree
-    {
-      size_t sz = strsz(sn);
-      uchr8_t* m = rsp_alloc(32 + 8 + sz);
-      node_t* new_nd = new_node(0,&m);
-      sym_t* new_sm = new_sym(sz,&m);
-      *sr = tag_p(new_sm,LTAG_SYM);
-      hashkey_(new_nd) = *sr;
-      *rt = new_nd;
-      return 1;
-    }
-
-  else
-    {
-      val_t s = hashkey_(*rt);
-      int comp = compare(h,symhash_(s)) ?: u8strcmp(sn,symname_(s)), result;
-      if (comp < 0)
-	{
-	  result = node_intern(&left_(*rt),sr,sn,h,fl,order);
-	  balance_(*rt) -= result;
-	}
-      else if (comp > 0)
-	{
-	  result = node_intern(&right_(*rt),sr,sn,h,fl,order);
-	  balance_(*rt) += result;
-	}
-      else
-	{
-	  return 0;
-	}
-
-      if (unbalanced(*rt)) balance_node(rt);
-      return result;
-    }
-}
-
-int node_delete(node_t** rt, val_t x)
-{
-  if (!(*rt)) // empty tree
-    {
-      return 0;
-    }
-
-  else
-    {
-      int comp = vm_ord(x,hashkey_(*rt)), result;
-      if (comp < 0)
-	{
-	  result = node_delete(&left_(*rt),x);
-	  balance_(*rt) += result;
-	}
-      else if (comp > 0)
-	{
-	  result = node_delete(&right_(*rt),x);
-	  balance_(*rt) -= result;
-	}
-      else
-	{
-	  *rt = NULL;                    // unhook the node from the tree
-	  return 1;
-	}
-
-      if (unbalanced(*rt)) balance_node(rt);
-      return result;
-    }
-}
-
-void balance_node(node_t** rt)
-{
-  node_t* tmpx = *rt, *tmpy;             // the two nodes to be rebalanced
-  if (right_heavy(tmpx))                 // right-heavy case
-    {
-      tmpy = right_(tmpx);
-      if (!left_heavy(tmpy)) *rt = rotate_ll(tmpx,tmpy);
-
-      else *rt = rotate_lr(tmpx,tmpy); 
-    }                                   
-  else
-    {
-      tmpy = left_(tmpx);
-      if (!right_heavy(tmpy)) *rt = rotate_rr(tmpx,tmpy);
-
-      else *rt = rotate_rl(tmpx,tmpy);
-    }
-
-  return;
-}
-
-node_t* rotate_ll(node_t* x, node_t* y)
-{
-  node_t* out = y;
-  right_(x) = left_(y);
-  left_(y) = x;
-  // recalculate balance for x and y
-  balance_(x) = balance_factor(x);
-  balance_(y) = balance_factor(y);
-
-  // return the new root
-  return out;
-}
-
-node_t* rotate_rr(node_t* x, node_t* y)
-{
-  node_t* out = y;
-  left_(x) = right_(y);
-  right_(y) = x;
-  // recalculate balance for x and y
-  balance_(x) = balance_factor(x);
-  balance_(y) = balance_factor(y);
-  // return the new root
-  return out;
-}
-
-
-node_t* rotate_lr(node_t* x, node_t* y)
-{
-  node_t* z = rotate_rr(y,left_(y));
-  return rotate_ll(x,z);
-}
-
-node_t* rotate_rl(node_t*x, node_t* y) {
-  node_t* z = rotate_ll(y,right_(y));
-  return rotate_rr(x,z);
-}
-
-int nodesz(table_t* t)
-{
-  switch (flags_(t))
-    {
-    case TABLEFLAG_ENVT: case TABLEFLAG_SYMTAB: return 0;
-    default: return 2;
-    }
 }
 
 val_t table_insert(val_t t, val_t hk)

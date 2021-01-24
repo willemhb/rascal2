@@ -179,7 +179,7 @@ bstr_t*   mk_bstr(size_t,uchr8_t*);
 val_t     rsp_new_bstr(size_t,val_t*);
 iostrm_t* mk_iostrm(chr8_t*,chr8_t*);
 val_t     rsp_new_iostrm(size_t,val_t*);
-sym_t*    mk_sym(chr8_t*,size_t,hash32_t,int32_t,bool);   // the third argument is a flag indicating the the authority to create
+sym_t*    mk_sym(chr8_t*,int32_t);                        
 val_t     rsp_new_sym(size_t,val_t*);                     // a new symbol
 val_t     rsp_cnvt_sym(size_t,val_t*);
 method_t* mk_meth(table_t*,vec_t*,vec_t*,uint64_t);       // local names, bytecode, closure, flags
@@ -209,19 +209,9 @@ val_t* get_vec_elements(vec_t*);
 /* object APIS (mostly this is the AVL implementation) */
 // AVL implementation (for insert, int32_tern, and delete, the extra node_t** argument is the address to leave the node matching the hashkey, and the return value
 // indicates whether a new element was created and whether it was inserted in the left or right subtree)
-node_t*  node_search(node_t*,val_t);
-int32_t  node_insert(node_t**,node_t**,val_t,size_t,uchr8_t*);
-int32_t  node_inttern(node_t**,node_t**,chr8_t*,hash32_t,int32_t,size_t);
-int32_t  node_delete(node_t*,val_t);
-node_t*  node_balance(node_t*);
-node_t*  rotate_ll(node_t*,node_t*);
-node_t*  rotate_rr(node_t*,node_t*);
-node_t*  rotate_lr(node_t*,node_t*);
-node_t*  rotate_rl(node_t*,node_t*);
-
 node_t* table_insert(table_t*,val_t);
 node_t* table_lookup(table_t*,val_t);
-sym_t*  table_intern(symtab_t*,chr8_t*,hash32_t,int32_t);
+sym_t*  intern_string(chr8_t*,size_t,hash32_t,int32_t);
 int32_t table_delete(table_t*,val_t);
 
 val_t vec_append(vec_t*,val_t);
