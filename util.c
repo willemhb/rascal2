@@ -229,9 +229,9 @@ inline int iswodigit(wint_t c) {
 
 /* error handling */
 
-inline const char* rsp_errname(rsp_err_t errno)
+inline const char* rsp_errname(rsp_err_t eno)
 {
-  return ERROR_NAMES[errno];
+  return ERROR_NAMES[eno];
 }
 
 void rsp_vperror(const chr8_t* fl, int32_t ln, const chr8_t* fnc, rsp_err_t eno, const chr8_t* fmt, ...)
@@ -265,26 +265,67 @@ void rsp_type_err(const char* fl, int ln, const char* fnc, const char* exp, val_
 
 
 /* inlined bindings for C arithmetic, bitwise, and comparison functions */
+
 // arithmetic
-int add_ii(val_t,val_t);
-val_t vm_sub(val_t,val_t);
-val_t vm_mul(val_t,val_t);
-val_t vm_div(val_t,val_t);
-val_t vm_rem(val_t,val_t);
-val_t vm_neg(val_t);
+inline int    add_ii  (int x,   int y)      { return x + y; }
+inline int    sub_ii  (int x,   int y)      { return x - y; }
+inline int    mul_ii  (int x,   int y)      { return x * y; }
+inline int    div_ii  (int x,   int y)      { return x / y; }
+inline int    rem_ii  (int x,   int y)      { return x % y; }
+inline int    neg_i   (int x)               { return -x ; }
+inline float  add_ff  (float x, float y)    { return x + y; }
+inline float  sub_ff  (float x, float y)    { return x - y; }
+inline float  mul_ff  (float x, float y)    { return x * y; }
+inline float  div_ff  (float x, float y)    { return x / y; }
+inline float  neg_f   (float x)             { return -x ; }
+inline long   add_ll  (long x,  long y)     { return x + y; }
+inline long   sub_ll  (long x,  long y)     { return x - y; }
+inline long   mul_ll  (long x,  long y)     { return x * y; }
+inline long   div_ll  (long x,  long y)     { return x / y; }
+inline long   rem_ll  (long x,  long y)     { return x % y; }
+inline long   neg_l   (long x)              { return -x ; }
+inline double add_dd  (double x, double y)  { return x + y; }
+inline double sub_dd  (double x, double y)  { return x - y; }
+inline double mul_dd  (double x, double y)  { return x * y; }
+inline double div_dd  (double x, double y)  { return x / y; }
+inline double neg_d   (double x)            { return -x ; }
 
 // comparison
-val_t vm_eql(val_t,val_t);
-val_t vm_neql(val_t,val_t);
-val_t vm_gt(val_t,val_t);
-val_t vm_ge(val_t,val_t);
-val_t vm_lt(val_t,val_t);
-val_t vm_le(val_t,val_t);
+inline bool eql_ii    (int x, int y)         { return x == y; }
+inline bool neql_ii   (int x, int y)         { return x != y; }
+inline bool gt_ii     (int x, int y)         { return x > y; }
+inline bool ge_ii     (int x, int y)         { return x >= y; }
+inline bool lt_ii     (int x, int y)         { return x < y; }
+inline bool le_ii     (int x, int y)         { return x <= y; }
+inline bool eql_ff    (float x, float y)     { return x == y; }
+inline bool neql_ff   (float x, float y)     { return x != y; }
+inline bool gt_ff     (float x, float y)     { return x > y; }
+inline bool ge_ff     (float x, float y)     { return x >= y; }
+inline bool lt_ff     (float x, float y)     { return x < y; }
+inline bool le_ff     (float x, float y)     { return x <= y; }
+inline bool eql_ll    (long x, long y)       { return x == y; }
+inline bool neql_ll   (long x, long y)       { return x != y; }
+inline bool gt_ll     (long x, long y)       { return x > y; }
+inline bool ge_ll     (long x, long y)       { return x >= y; }
+inline bool lt_ll     (long x, long y)       { return x < y; }
+inline bool le_ll     (long x, long y)       { return x <= y; }
+inline bool eql_dd    (double x, double y)   { return x == y; }
+inline bool neql_dd   (double x, double y)   { return x != y; }
+inline bool gt_dd     (double x, double y)   { return x > y; }
+inline bool ge_dd     (double x, double y)   { return x >= y; }
+inline bool lt_dd     (double x, double y)   { return x < y; }
+inline bool le_dd     (double x, double y)   { return x <= y; }
 
 // bitwise
-val_t vm_bor(val_t,val_t);
-val_t vm_bxor(val_t,val_t);
-val_t vm_band(val_t,val_t);
-val_t vm_lsh(val_t,val_t);
-val_t vm_rsh(val_t,val_t);
-val_t vm_bneg(val_t);
+inline int or_ii (int x, int y)              { return x | y; }
+inline int xor_ii(int x, int y)              { return x ^ y; }
+inline int and_ii(int x, int y)              { return x & y; }
+inline int lsh_ii(int x, int y)              { return x >> y; }
+inline int rsh_ii(int x, int y)              { return x << y;}
+inline int bneg_i(int x)                     { return ~x; }
+inline long or_ll (long x, long y)           { return x | y; }
+inline long xor_ll(long x, long y)           { return x ^ y; }
+inline long and_ll(long x, long y)           { return x & y; }
+inline long lsh_ll(long x, long y)           { return x >> y; }
+inline long rsh_ll(long x, long y)           { return x << y;}
+inline long bneg_l(long x)                   { return ~x; }

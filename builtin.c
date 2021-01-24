@@ -1,60 +1,21 @@
 #include "capi.h"
 
-char* strval(val_t s, const char* fl, int ln, const char* fn)
-{
-  if (isstr(s)) return tostr_(s);
-  else if (issym(s)) return symname_(s);
-  else
-    {
-      _rsp_perror(fl,ln,fn,TYPE_ERR,"Non-string type.");
-      rsp_raise(TYPE_ERR);
-      return 0;
-    }
-}
-
-float floatval(val_t x)
-{
-  if (isint(x))
-    {
-      return (float)toint_(x);
-    }
-  else return tofloat(x);
-}
-
-int intval(val_t x)
-{
-  if (isfloat(x))
-    {
-      return (int)tofloat_(x);
-    }
-  else return toint(x);
-}
-
-#define DECLARE_ARITHMETIC_2(fname,funci,funcf,rtni,rtnf)	\
-  val_t bltn_## fname(val_t* a)                                 \
-  {                                                             \
-    if (isfloat(a[1]) || isfloat(a[0]))                         \
-      {                                                         \
-	return rtnf(funcf(floatval(a[0]),floatval(a[1])));	\
-      }					                        \
-    else                                                        \
-    {                                                           \
-      return rtni(funci(intval(a[0]),intval(a[1])));		\
-    }                                                           \
-  }
 
 
 #define DECLARE_ARITHMETIC_1(fname,funci,funcf,rtni,rtnf)       \
-  val_t bltn_## fname(val_t* a)					\
+  val_t bltn_## fname(val_t x)					\
     {                                                           \
-    if (isfloat(a[0]))                                          \
-      {                                                         \
-	return rtnf(funcf(tofloat_(a[0])));			\
-      }					                        \
+      if (isfloat(x))						\
+	return rtnf(funcf(fval(x)));				\
     else                                                        \
-    {                                                           \
-      return rtni(funci(toint(a[0])));				\
-    }                                                           \
+      return rtni(funci(toint(__FILE__,__LINE__,__func__,x)));	\
+  }
+
+
+#define DECLARE_ARITHMETIC_2(fname,funci,funcf,rtni,rtnf)	\
+  val_t bltn_## fname(val_t x, val_t y)                         \
+  {                                                             \
+       							        \
   }
 
 

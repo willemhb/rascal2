@@ -61,35 +61,34 @@ extern val_t R_GLOBAL_CONSTANTS[32];
 const char* SPECIAL_FORMS[] = { "setv", "def", "quote", "if", "fun", "macro", "do", "let" };
 const char* SPECIAL_CONSTANTS[] = { "nil", "none", "t", "f", "ok", "unbound" };
 const char* SPECIAL_GLOBALS[] = { "&envt", "&in", "&out", "&err", "&name", "&argv", "&argc", "&main", "&symtab", "&readtab"};
-const char* SPECIAL_KEYWORDS[] =  { "r",  "w", "a", "r+", "w+", "a+", "alnum", "alpha", "blank", "cntrl", "digit", "graph", "lower", "print32_t", "space",  "upper",   "xdigit", "&"};
+const char* SPECIAL_KEYWORDS[] =  { "r",  "w", "a", "r+", "w+", "a+", "alnum", "alpha", "blank", "cntrl", "digit", "graph", "lower", "print", "space",  "upper",   "xdigit", "&"};
 
 // main memory
  // RAM is the main HEAP; FREE is the address of the next free cons cell; toffset is used to reallocate a block before GC if the reallocation would trigger a collection
-extern unsigned char *FROMSPACE, *TOSPACE, *RAM, *FREE, *TOFFSET;
-const float RAM_LOAD_FACTOR = 0.6;
+extern unsigned char *RAM, *FREE, *EXTRA;
 extern val_t HEAPSIZE, STACKSIZE, DUMPSIZE;
+const float RAM_LOAD_FACTOR = 0.6;
 extern bool GROWHEAP;
 
 // main registers and stacks
-extern val_t REGISTERS[32];
-extern rsp_unboxed_t BOXESRX[8]; extern vtag_t TAGSRX[8]; // registers for holding untagged values; TAGSRX holds the corresponding tags for the values in BOXRX
-// eval, SP, and BP are reserved for the bytecode interpreter, while DUMP, DP, and DB are reserved for builtin C functions
-extern val_t *EVAL, *DUMP, DP, DB;
+extern val_t REGISTERS[16];
+// typed registers for holding intermediate untagged values
+extern uint64_t UINT64RX[4]; extern int64_t  INT64RX[4]; extern flt64_t  FLT64RX[4];
+extern uint32_t UINT32RX[4]; extern int32_t  INT32RX[4]; extern flt32_t  FLT32RX[4];
+extern val_t *STACK;
 
 // aliases for main registers
-#define VAL       REGISTERS[0]
-#define ENVT      REGISTERS[1]
-#define TMPL      REGISTERS[2]
-#define CONT      REGISTERS[3]
-#define SB        REGISTERS[4]
-#define SP        REGISTERS[5]
-#define PC        REGISTERS[6]
-#define OP        REGISTERS[7]
-#define ARG(x)    REGISTERS[8 + (x)]
-#define TMP(x)    REGISTERS[12 + (x)]
-#define OPTS(x)   REGISTERS[16]            // once optional arguments are implemented their flags can be passed in this register
-#define BOX(x)    BOXESRX[(x)]
-#define TAG(x)    TAGSRX[(x)]
+#define VAL             REGISTERS[0]
+#define ENVT            REGISTERS[1]
+#define TMPL            REGISTERS[2]
+#define CONT            REGISTERS[3]
+#define SB              REGISTERS[4]
+#define SP              REGISTERS[5]
+#define PC              REGISTERS[6]
+#define OP              REGISTERS[7]
+#define ARG(x)          REGISTERS[8 + (x)]
+#define TMP(x)          REGISTERS[12 + (x)]
+#define NUMREG(t,sz,x)  t ## sz ## RX[(x)] 
 
 // flags for bitmapping the main registers
 typedef enum {

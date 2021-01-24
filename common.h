@@ -62,6 +62,7 @@ typedef struct _rsp_ectx_t {
   struct _rsp_ectx_t* prev;
   // all the shared global state that might have changed
   uchr8_t* free_state;
+  uptr_t   dp_state;
   uptr_t rx_state[16];
 } rsp_ectx_t;
 

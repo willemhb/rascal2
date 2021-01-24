@@ -54,21 +54,26 @@ typedef table_t readtab_t;
 
 typedef union
 {
-  val_t (*z_farg_fun)();
-  val_t (*u_farg_fun)(val_t);
-  val_t (*b_farg_fun)(val_t,val_t);
-  val_t (*t_farg_fun)(val_t,val_t,val_t);
-  val_t (*n_farg_fun)(val_t*);
-  val_t (*varg_fun)(size_t,val_t*);
-  val_t (*u_farg_mac)(envt_t*,val_t);
-  val_t (*b_farg_mac)(envt_t*,val_t,val_t);
-  val_t (*t_farg_mac)(envt_t*,val_t,val_t,val_t);
-  val_t (*n_farg_mac)(envt_t*,val_t*);                  // farg macro functions
-  val_t (*varg_mac)(envt_t*,size_t,val_t*);             // varg macro functions
-  val_t (*farg_meta)(type_t*,val_t*);                   // farg meta functions
-  val_t (*varg_meta)(type_t*,size_t,val_t*);            // varg meta functions
-  val_t (*farg_metamac)(type_t*,envt_t*,val_t*);        // farg meta macro functions
-  val_t (*varg_metamac)(type_t*,envt_t*,size_t,val_t*); // varg meta macro functions
+  val_t (*z_arg_fun)();
+  val_t (*u_arg_fun)(val_t);
+  val_t (*b_arg_fun)(val_t,val_t);
+  val_t (*n_arg_fun)(val_t*);
+  val_t (*v_arg_fun)(size_t,val_t*);
+  val_t (*z_arg_mac)(envt_t*);
+  val_t (*u_arg_mac)(envt_t*,val_t);
+  val_t (*b_arg_mac)(envt_t*,val_t,val_t);
+  val_t (*n_arg_mac)(envt_t*,val_t*);
+  val_t (*v_arg_mac)(envt_t*,size_t,val_t*);
+  val_t (*z_arg_meta)(type_t*);
+  val_t (*u_arg_meta)(type_t*,val_t);
+  val_t (*b_arg_meta)(type_t*,val_t,val_t);
+  val_t (*n_arg_meta)(type_t*,val_t*);                 
+  val_t (*v_arg_meta)(type_t*,size_t,val_t*);
+  val_t (*z_arg_meta_mac)(type_t*,envt_t*);
+  val_t (*u_arg_meta_mac)(type_t*,envt_t*,val_t);
+  val_t (*b_arg_meta_mac)(type_t*,envt_t*,val_t,val_t);        
+  val_t (*n_arg_meta_mac)(type_t*,envt_t*,val_t*);
+  val_t (*v_arg_meta_mac)(type_t*,envt_t*,size_t,val_t*);
 } rcfun_t;
 
 // this struct holds vm state for handling exceptions
@@ -425,6 +430,7 @@ struct type_t {
 
   size_t    tp_base;                  // the type's base size in bytes (this can be 0)
   size_t    tp_nfields;               // the number of rascal accessible fields
+  size_t    tp_elsz;                  // the size of individual elements of a collection
   table_t*  tp_fields;                // the type's rascal accessible fields
   cprim_t*  tp_new;                   // called to create a new rascal value 
 
