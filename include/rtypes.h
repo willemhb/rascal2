@@ -6,7 +6,6 @@
 
 /* typedefs for builtin types, the tagging system, and a few macros */
 
-
 // typedefs for rascal types
 typedef uintptr_t val_t;       // a tagged rascal value
 
@@ -18,11 +17,12 @@ typedef flt32_t  rflt_t;
 typedef FILE     iostrm_t;
 
 /* core object types */
-typedef struct obj_t obj_t;
+typedef struct obj_t  obj_t;
 typedef struct pair_t pair_t;
 typedef struct list_t list_t;
-typedef struct sym_t  sym_t;
 typedef struct atom_t atom_t;
+typedef struct hash_t hash_t;
+typedef struct ihash_t ihash_t;
 typedef struct tuple_t tuple_t;
 typedef tuple_t btuple_t;
 typedef tuple_t tbnode_t;
@@ -48,6 +48,10 @@ typedef tuple_t closure_t;
 
 // valid function signatures for functions callable from within rascal
 typedef val_t (*r_cfun_t)(size_t,val_t*);
+typedef val_t (*r_zfun_t)();
+typedef val_t (*r_ufun_t)(val_t);
+typedef val_t (*r_bfun_t)(val_t,val_t);
+typedef val_t (*r_mfun_t)(val_t,envt_t*,list_t*);
 
 // signatures for functions used by the C API
 typedef void*   (*r_callc_t)(type_t*,size_t,void*);  // the void argument is for any C data that needs to be accounted for in allocation
@@ -74,18 +78,15 @@ typedef enum
   {
     /* string and symbol types */
     ATOM_TP        = 0x00u,
-    SYM_TP         = 0x01u,
-    STR_TP         = 0x02u,
-    BSTR_TP        = 0x03u,
+    DHASH_TP       = 0x01u,
+    SHASH_TP       = 0x02u,
+    IHASH_TP       = 0x03u,
+    STR_TP         = 0x04u,
+    BSTR_TP        = 0x05u,
 
     /* tuple types */
-    TUPLE_TP       = 0x04u,
-    BTUPLE_TP      = 0x05u,
-    // reserved but not used
-    
- /* TBBNODE_TP     = 0x06u, 
-    TBANODE_TP     = 0x07u, */
-    
+    TUPLE_TP       = 0x06u,
+    BTUPLE_TP      = 0x07u,    
     CODE_TP        = 0x08u,
     CLOSURE_TP     = 0x09u,
     ENVT_TP        = 0x0au,
@@ -115,13 +116,17 @@ typedef enum
     CPOINTER_TP    = 0x1cu,
     
     /* types that don't need to fit into the narrowed type tag space */
-    OBJECT_TP      = 0x1du,
-    PAIR_TP        = 0x1eu,
-    LIST_TP        = 0x1fu,
-    IOSTRM_TP      = 0x20u,
-    TYPE_TP        = 0x21u,
-    GENERIC_TP     = 0x22u,
+
+    OBJECT_TP      = 0x1cu,
+    PAIR_TP        = 0x1du,
+    LIST_TP        = 0x1eu,
+    IOSTRM_TP      = 0x1fu,
+    TYPE_TP        = 0x20u,
+    GENERIC_TP     = 0x21u,
+    CLASS_TP       = 0x22u,
   } bltn_obj_tp_t;
+
+
 
 typedef enum
   {
@@ -138,10 +143,13 @@ typedef enum
     INT         = (INT_TP << 3)     | DIRECT,
     FLOAT       = (FLOAT_TP << 3)   | DIRECT,
     ATOM        = (ATOM_TP << 3)    | OBJHEAD,
+    DHASH       = (DHASH_TP << 3)   | OBJHEAD,
+    SHASH       = (SHASH_TP << 3)   | OBJHEAD,
     STRING      = (STR_TP << 3)     | OBJHEAD,
     BSTRING     = (BSTR_TP << 3)    | OBJHEAD,
     TUPLE       = (TUPLE_TP << 3)   | OBJHEAD,
     BTUPLE      = (BTUPLE_TP << 3)  | OBJHEAD,
+    SET         = (SET_TP << 3)     | OBJHEAD,
     DICT        = (DICT_TP << 3)    | OBJHEAD,
     TYPE        = (TYPE_TP << 3)    | OBJHEAD,
     NONE        = 0xffu,     // an invalid lowtag
@@ -249,21 +257,20 @@ struct tuple_t
 
 #define tuple_szdata(t) (t)->obj_wfield
 #define tuple_flags(t)  (t)->obj_lflags
-#define tbnd_level(t)   (t)->obj_lflags
 
 struct table_t
 {
   RSP_OBJECT_HEAD;
   val_t mapping;
   val_t nkeys;
-  val_t ordkeys;              // a double-ended, ordered list of the dictionary's keys and
-};                            // bindings
+  val_t free;            // a linked list of free table nodes
+};
 
 #define tb_flags(d)     (d)->obj_hflags
 #define tb_levels(d)    (d)->obj_lflags
 #define tb_mapping(d)   (d)->mapping
-#define tb_nkeys(d)   (d)->nkeys
-#define tb_ordkeys(d) (d)->ordkeys
+#define tb_nkeys(d)     (d)->nkeys
+#define tb_ordkeys(d)   (d)->ordkeys
 
 struct atom_t
 {
@@ -274,6 +281,25 @@ struct atom_t
 #define atm_hash(a)  (a)->obj_wfield
 #define atm_flags(a) (a)->obj_lflags
 #define atm_name(a)  &((a)->atm_chrs[0])
+
+// hash_t structs store the keys for table types (and also the bindings, if the table stores bindings)
+// collisions are resolved with linear probing (for now)
+// the common hash is stored in the wide field of the object head, and the number of records in the node is
+// stored in the 16-bit field
+struct hash_t
+{
+  RSP_OBJECT_HEAD;
+  val_t keys[1];
+};
+
+struct ihash_t
+{
+  RSP_OBJECT_HEAD;
+  atom_t* keys[1];
+};
+
+#define hash_common_hash(v) (v)->obj_wfield
+#define hash_nkeys(v)       (v)->obj_hflags
 
 typedef enum
   {

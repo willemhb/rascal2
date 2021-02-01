@@ -13,15 +13,6 @@ val_t*   tbnode_split(val_t*,list_t*,val_t,hash32_t,val_t,hash32_t,uint8_t);
 val_t*   tbnode_addkey(table_t*,tuple_t**,val_t,hash32_t);
 val_t*   tbnode_realloc(tuple_t**,uint32_t);
 
-hash32_t extended_hash(hash32_t h, uint8_t lvl)
-{
-  if (lvl >= 6)
-      for (uint8_t tmp = 6; tmp <= lvl; tmp += 6)
-	h = rehash(h,tmp);
-
-  return h;
-}
-
 uint32_t local_idx(hash32_t h, uint8_t lvl)
 {
   if (lvl > 6)

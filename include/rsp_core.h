@@ -9,14 +9,11 @@
 #include "opcodes.h"
 
 /* 
-   this is the main header used by different modules - it supplies everything from common, rtypes, and globals, and provides convenience macros and
-   function declarations. The actual functions are divided between several files, listed below (above the declarations of the functions to be found in those files)
 
-   convenience macros are defined at the bottom
-
+   general utilities - util/ 
+ 
  */
 
-/* util.c */
 // stack manipulating functions
 val_t  push(val_t);         
 val_t  pushn(size_t);
@@ -55,11 +52,7 @@ const chr_t* rsp_efmt(rsp_err_t);
 void rsp_vperror(const chr_t*, int32_t, const chr_t*, rsp_err_t, ...);
 rsp_ectx_t* rsp_restorestate(rsp_ectx_t*);
 
-/* 
-   rbits.c
-
- */
-
+/* util/rbits.c */
 // checking tags, getting type information
 uint32_t ltag(val_t);
 uint32_t tpkey(val_t);
@@ -78,8 +71,6 @@ chr_t*   tp_typename(type_t*);
 val_t    trace_fp(val_t);              // recursively follow a forward pointer (generally safe)
 val_t    update_fp(val_t*);            // recursively update a forward pointer (generally safe)
 
-
-/* predicates */
 // global value predicates
 bool isnil(val_t);
 bool istrue(val_t);
@@ -146,8 +137,8 @@ rchr_t    tochar( SAFECAST_ARGS );
 obj_t*    toobj( SAFECAST_ARGS );
 type_t*   totype(SAFECAST_ARGS );
 
-/* mem.c */
-// memory management
+/* object apis - obj/ */
+// memory management (mem.c)
 void*    vm_cmalloc(uint64_t);       
 int32_t  vm_cfree(void*); 
 uchr_t*  vm_crealloc(void**,uint64_t,bool); 
@@ -167,8 +158,7 @@ bool     v_in_heap(val_t v, uchr_t* h, uint64_t sz);
 	   val_t:v_in_heap,                        \
 	   default:p_in_heap)(v,u,sz)
 
-/* individual object apis */
-// lists, pairs, and tuples
+// lists, pairs, and tuples (obj.c)
 list_t*   mk_list(size_t,val_t*);
 pair_t*   mk_pair(val_t,val_t);
 tuple_t*  mk_tuple(size_t,uint8_t,uint8_t);
@@ -196,7 +186,7 @@ void      prn_tuple(val_t,iostrm_t*);
 void      prn_btuple(val_t,iostrm_t*);
 list_t*   list_append(list_t**,val_t);
 
-// strings, bstrings and core atoms api
+// strings, bstrings and core atoms api (string.c)
 str_t*    mk_str(chr_t*);
 bstr_t*   mk_bstr(size_t,uchr_t*);
 atom_t*   new_atom(chr_t*,size_t,uint16_t,hash32_t);
@@ -214,9 +204,10 @@ void      prn_bstr(val_t,iostrm_t*);
 void      prn_atom(val_t,iostrm_t*);
 chr_t*    strval(val_t);
 
-// tables, sets, and dicts
+// tables, sets, and dicts (table.c)
 table_t*   mk_table(uint16_t,uint8_t,bool);
-tuple_t*   mk_tbnode(size_t,uint8_t);
+dict_t*    mk_dict(size_t);
+set_t*     mk_set(size_t);
 val_t      copy_table(type_t*,val_t);
 list_t*    tb_bindings(table_t*);
 list_t*    tb_bindings_tail(table_t*);
@@ -227,7 +218,9 @@ void       prn_set(val_t,iostrm_t*);
 atom_t*    mk_atom(chr_t*,uint16_t);
 atom_t*    intern_string(chr_t*,hash32_t,uint16_t);
 
-// direct data
+// 
+
+// direct data (direct.c)
 val_t     mk_bool(int32_t);
 val_t     mk_char(int32_t);
 val_t     mk_int(int32_t);
@@ -252,6 +245,8 @@ val_t     env_lookup(tuple_t*,size_t,size_t);
 val_t     env_assign(tuple_t*,size_t,size_t,val_t);
 
 // the virtual machine and compiler
+int32_t   vm_check_argco();
+bool      vm_check_bltn_argco();
 val_t     vm_call_bltn(r_cfun_t*,size_t,val_t*);           
 opcode_t  vm_fetch_instr();                             
 val_t     vm_exec(tuple_t*,tuple_t*);                         
