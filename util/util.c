@@ -1,4 +1,4 @@
-#include "rascal.h"
+#include "../include/rsp_core.h"
 
 /* utility functions */
 
@@ -15,64 +15,45 @@
 #define HEX_NUM_RE "[+-]?0[xX][[:xdigit:]]+"
 
 // stack manipulation functions
-inline val_t push(val_t** stk,val_t* sp, val_t* stksz, val_t v)
+static inline void grow_stack(void)
 {
-  *stk[(*sp)++] = v;
-  if (unlikely(*sp == *stksz))
-    {
-      *stksz *= 2;
-      vm_crealloc((uchr8_t**)stk,(*stksz)*8,false);
-    }
+  STACKSIZE *= 2;
+  vm_crealloc((void**)&STACK,STACKSIZE*8,false);
+  return;
+}
+  
 
-  return *sp;
+inline val_t push(val_t v)
+{
+  STACK[(SP)++] = v;
+  if (unlikely(SP == STACKSIZE))
+    grow_stack();
+
+  return SP;
 }
 
 // reserve a portion of the stack in advance
-val_t stk_reserve(val_t** stk, val_t* sp, val_t* stksz, size_t n)
+val_t pushn(size_t n)
 {
-  if (*stksz <= (*sp + n))
-    {
-      *stksz *= 2;
-      vm_crealloc((uchr8_t**)stk,(*stksz)*8,false);
-    }
+  if (STACKSIZE <= SP + n)
+    grow_stack();
 
-  val_t out = *sp + 1;
-  *sp += n;
+  val_t out = SP + 1;
+  SP += n;
   return out;
 }
 
-val_t  pushn(val_t** stk, val_t* sp, val_t* stksz, size_t n, ...)
+inline val_t pop()
 {
-  if (*stksz <= (*sp + n))
-    {
-      *stksz *= 2;
-      vm_crealloc((uchr8_t**)stk,(*stksz)*8,false);
-    }
-
-  val_t base = *sp + 1;
-  val_t top = *sp + n;
-  va_list args;
-  va_start(args,n);
-
-  for (val_t i = base; i <= top; i++) *stk[i] = va_arg(args,val_t);
-
-  *sp = top;
-  va_end(args);
-
-  return base;
+  if (!SP) rsp_raise(BOUNDS_ERR);
+  return STACK[--(SP)];
 }
 
-inline val_t pop(val_t* stk, val_t* sp)
+val_t popn(size_t n)
 {
-  if (unlikely(!(*sp))) rsp_raise(BOUNDS_ERR);
-  return stk[--(*sp)];
-}
-
-val_t  popn(val_t* stk, val_t* sp, size_t n)
-{
-  if (unlikely(n > (*sp))) rsp_raise(BOUNDS_ERR);
-  *sp -= n;
-  return stk[*sp + 1];
+  if (n > SP) rsp_raise(BOUNDS_ERR);
+  SP -= n;
+  return SP;
 }
 
 // numeric utilities
@@ -114,14 +95,47 @@ inline unsigned long clog2(unsigned long i) {
   else return 64 - __builtin_clzl(i);
 }
 
-hash32_t hash_str(const char* s) {
+hash32_t hash_bytes(const uchr_t* m, size_t sz)
+{
   hash32_t out = FNV_1A_32_OFFSET;
-  int limit = strlen(s);
 
-  for (int i = 0; i < limit; i++) {
-    out ^= s[i];
-    out *= FNV_1A_32_PRIME;
-  }
+  for (size_t i = 0; i < sz; i++)
+    {
+      out ^= m[i];
+      out *= FNV_1A_32_PRIME;
+    }
+
+  return out;
+}
+
+hash32_t rehash(hash32_t oh, uint32_t rh)
+{
+  if (!rh)
+    return oh;
+
+  hash32_t out = oh;
+  uchr_t buf[4];
+  memcpy(buf,&rh,4);
+
+  for (size_t i = 0; i < 4; i++)
+    {
+      out ^= buf[i];
+      out *= FNV_1A_32_PRIME;
+    }
+
+  return out;
+}
+
+hash32_t hash_string(const chr_t* s)
+{
+  size_t limit = strlen(s);
+  hash32_t out = FNV_1A_32_OFFSET;
+
+  for (size_t i = 0; i < limit; i++)
+    {
+      out ^= s[i];
+      out *= FNV_1A_32_PRIME;
+    }
 
   return out;
 }
@@ -229,17 +243,16 @@ inline int iswodigit(wint_t c) {
 
 /* error handling */
 
-inline const char* rsp_errname(rsp_err_t eno)
-{
-  return ERROR_NAMES[eno];
-}
+inline const chr_t* rsp_efmt(rsp_err_t eno) { return ERROR_FMTS[eno]; }
+inline const chr_t* rsp_errname(rsp_err_t eno) { return ERROR_NAMES[eno]; }
 
-void rsp_vperror(const chr8_t* fl, int32_t ln, const chr8_t* fnc, rsp_err_t eno, const chr8_t* fmt, ...)
+void rsp_vperror(const chr_t* fl, int32_t ln, const chr_t* fnc, rsp_err_t eno, ...)
 {
-  fprintf(stderr,ERRINFO_FMT, fl, ln, fnc, rsp_errname(eno));
+  fprintf(stderr,ERRINFO_FMT,fl,ln,fnc,rsp_errname(eno));
+  const chr_t* fmt = rsp_efmt(eno);
   va_list args;
 
-   va_start(args, fmt);
+   va_start(args, eno);
    vfprintf(stderr, fmt, args);
    va_end(args);
 
@@ -249,20 +262,12 @@ void rsp_vperror(const chr8_t* fl, int32_t ln, const chr8_t* fnc, rsp_err_t eno,
 }
 
 void rsp_raise(rsp_err_t errno) {
-  if (exc_stack == NULL) {
-    fprintf(stderr, "Exiting due to unhandled %s error.\n", rsp_errname(errno));
-    exit(EXIT_FAILURE);
-  } else {
-    longjmp(exc_stack->buf, errno);
-  }
+  if (exc_stack == NULL)
+     longjmp(exc_stack->buf, errno);
+
+  fprintf(stderr, "Exiting due to unhandled %s error.\n", rsp_errname(errno));
+  exit(EXIT_FAILURE);
 }
-
-void rsp_type_err(const char* fl, int ln, const char* fnc, const char* exp, val_t got) {
-  fprintf(stderr, "[%s:%i:%s:] type error: expected type %s, got %s", fl,ln,fnc,exp,val_tpname(got));
-  rsp_raise(TYPE_ERR);
-}
-
-
 
 /* inlined bindings for C arithmetic, bitwise, and comparison functions */
 
