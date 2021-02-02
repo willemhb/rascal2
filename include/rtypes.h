@@ -8,6 +8,7 @@
 
 // typedefs for rascal types
 typedef uintptr_t val_t;       // a tagged rascal value
+typedef uint32_t tpkey_t;
 
 /* non-object types */
 typedef bool     rbool_t;
@@ -18,16 +19,13 @@ typedef FILE     iostrm_t;
 
 /* core object types */
 typedef struct obj_t  obj_t;
+typedef struct vobj_t vobj_t;
 typedef struct pair_t pair_t;
 typedef struct list_t list_t;
 typedef struct atom_t atom_t;
-typedef struct hash_t hash_t;
-typedef struct ihash_t ihash_t;
+typedef struct ftuple_t ftuple_t;
 typedef struct tuple_t tuple_t;
 typedef tuple_t btuple_t;
-typedef tuple_t tbnode_t;
-typedef tuple_t anode_t;
-typedef btuple_t bnode_t;
 typedef struct table_t table_t;
 typedef table_t set_t;
 typedef table_t dict_t;
@@ -54,125 +52,96 @@ typedef val_t (*r_bfun_t)(val_t,val_t);
 typedef val_t (*r_mfun_t)(val_t,envt_t*,list_t*);
 
 // signatures for functions used by the C API
-typedef void*   (*r_callc_t)(type_t*,size_t,void*);  // the void argument is for any C data that needs to be accounted for in allocation
-typedef int32_t (*r_cinit_t)(type_t*,val_t,void*);   // the void argument is for any C data that needs to be initialized
+typedef void*   (*r_callc_t)(type_t*,size_t,void*);
+typedef int32_t (*r_cinit_t)(type_t*,val_t,void*);
 
 // this struct holds vm state for handling exceptions
 typedef struct _rsp_ectx_t rsp_ectx_t;
 
 typedef enum
   {
-    NIL_TP         = 0x00u,
-    BOOL_TP        = 0x01u,
-    CHAR_TP        = 0x02u,
-    INT_TP         = 0x03u,
-    FLOAT_TP       = 0x04u,
-    /* reserved but not implemented */
-    UINT_TP        = 0x05u,
-    IMAG_TP        = 0x06u,
-  } bltn_direct_tp_t;
-
-const uint64_t NUM_DIRECT_TYPES = IMAG_TP + 1;
+    LTAG_LIST    = 0x00u,
+    OBJ          = 0x01u,
+    DIRECT       = 0x02u,
+    OBJHEAD      = 0x03u,
+    LTAG_IOSTRM  = 0x04u,
+  } ltag_t;
 
 typedef enum
   {
-    /* string and symbol types */
-    ATOM_TP        = 0x00u,
-    DHASH_TP       = 0x01u,
-    SHASH_TP       = 0x02u,
-    IHASH_TP       = 0x03u,
-    STR_TP         = 0x04u,
-    BSTR_TP        = 0x05u,
-
-    /* tuple types */
-    TUPLE_TP       = 0x06u,
-    BTUPLE_TP      = 0x07u,    
-    CODE_TP        = 0x08u,
-    CLOSURE_TP     = 0x09u,
-    ENVT_TP        = 0x0au,
+    LIST           = LTAG_LIST,
+    PAIR           = OBJ,
+    BOOL           = DIRECT,
+    NIL            = OBJHEAD,
+    IOSTRM         = LTAG_IOSTRM,
+    CHAR           = 0x05u,
+    INT            = 0x06u,
+    FLOAT          = 0x08u,
+    UINT           = 0x09u,
+    IMAG           = 0x0au,
+    ATOM           = 0x0bu,
+    TUPLE          = 0x0cu,
+    BTUPLE         = 0x0du,
+    TBNODE         = 0x0eu,
+    TBSLEAF        = 0x0fu,
+    TBDLEAF        = 0x10u,
+    STR            = 0x11u,
+    BSTR           = 0x12u,
 
     /* mapping types */
-    TABLE_TP       = 0x0bu,
-    SET_TP         = 0x0cu,
-    DICT_TP        = 0x0du,
-    SYMTB_TP       = 0x0eu,
-    READTB_TP      = 0x0fu,
-    NMSPC_TP       = 0x10u,
-    MODULE_TP      = 0x11u,
-    METHTAB_TP     = 0x12u,
+    TABLE          = 0x13u,
+    SET            = 0x14u,
+    DICT           = 0x15u,
 
+    /* vm types */
+    SYMTB          = 0x16u,
+    READTB         = 0x17u,
+    NMSPC          = 0x18u,
+    MODULE         = 0x19u,
+    METHTAB        = 0x1au,
+    CODE           = 0x1bu,
+    CLOSURE        = 0x1cu,
+    ENVT           = 0x1du,
+    BLTNFUNC       = 0x1eu,
+    CPOINTER       = 0x1fu,
+    
     /* low-level types */
-    CARR_TP        = 0x13u,
-    CVEC_TP        = 0x14u,
-    BIGINT_TP      = 0x15u,
-    BIGFLT_TP      = 0x16u,
-    BIGIMAG_TP     = 0x17u,
-    BIGCMPLX_TP    = 0x18u,
-    BIGRAT_TP      = 0x19u,
+    CARRAY         = 0x20u,
+    CVECTOR        = 0x21u,
+    BIGINT         = 0x22u,
+    BIGFLT         = 0x23u,
+    BIGIMAG        = 0x24u,
+    BIGCMPLX       = 0x25u,
+    BIGRAT         = 0x26u,
 
-    /* function types */
-    BLTNFUNC_TP    = 0x1au,
-    METHOD_TP      = 0x1bu,
-    CPOINTER_TP    = 0x1cu,
-    
-    /* types that don't need to fit into the narrowed type tag space */
+    /* metaobjects and base classes */
 
-    OBJECT_TP      = 0x1cu,
-    PAIR_TP        = 0x1du,
-    LIST_TP        = 0x1eu,
-    IOSTRM_TP      = 0x1fu,
-    TYPE_TP        = 0x20u,
-    GENERIC_TP     = 0x21u,
-    CLASS_TP       = 0x22u,
-  } bltn_obj_tp_t;
-
-
-
-typedef enum
-  {
-    LIST        = 0x00u,     // a pointer to a list object (implicitly a pair)
-    OBJ         = 0x01u,     // a pointer to an arbitrary object (implicitly a pair)
-    DIRECT      = 0x02u,     // direct data
-    OBJHEAD     = 0x03u,     // marks the start of an object head
-    IOSTRM      = 0x04u,
-
- /* BLTNHEAD    = 0x07u, */
-
-    BOOL        = (BOOL_TP << 3)    | DIRECT,
-    CHAR        = (CHAR_TP << 3)    | DIRECT,
-    INT         = (INT_TP << 3)     | DIRECT,
-    FLOAT       = (FLOAT_TP << 3)   | DIRECT,
-    ATOM        = (ATOM_TP << 3)    | OBJHEAD,
-    DHASH       = (DHASH_TP << 3)   | OBJHEAD,
-    SHASH       = (SHASH_TP << 3)   | OBJHEAD,
-    STRING      = (STR_TP << 3)     | OBJHEAD,
-    BSTRING     = (BSTR_TP << 3)    | OBJHEAD,
-    TUPLE       = (TUPLE_TP << 3)   | OBJHEAD,
-    BTUPLE      = (BTUPLE_TP << 3)  | OBJHEAD,
-    SET         = (SET_TP << 3)     | OBJHEAD,
-    DICT        = (DICT_TP << 3)    | OBJHEAD,
-    TYPE        = (TYPE_TP << 3)    | OBJHEAD,
-    NONE        = 0xffu,     // an invalid lowtag
-    
-  } ltag_t;
+    OBJECT         = 0x27u,
+    TBILEAF        = 0x28u,
+    FTUPLE         = 0x29u,
+    TYPE           = 0x2au,
+    GENERIC        = 0x2bu,
+    CLASS          = 0x2cu,
+  } bltn_tpkey_t;
 
 /* 
     canonical object heads
  */
 
-#define RSP_OBJECT_HEAD    \
-  uint32_t obj_wfield;     \
-  uint16_t obj_hflags;     \
-  uint8_t  obj_lflags;     \
-  uint8_t  obj_tag
+#define RSP_OBJECT_HEAD      \
+  uint32_t obj_tpkey;        \
+  uint16_t obj_hflags;       \
+  uint8_t  obj_lflags;       \
+  uint8_t  obj_vflags;       \
 
 // not currently implemented
-#define RSP_VOBJECT_HEAD   \
-  uint32_t obj_tp_key;     \
-  uint16_t obj_hflags;     \
-  uint8_t  obj_lflags;     \
-  uint8_t  obj_tag;        \
-  uint64_t obj_size
+#define RSP_VOBJECT_HEAD     \
+  uint32_t obj_tpkey;        \
+  uint16_t obj_hflags;       \
+  uint8_t  obj_lflags;       \
+  uint8_t  obj_vflags;	     \
+  uptr_t   obj_size
+
 
 typedef enum
   {
@@ -228,7 +197,17 @@ struct obj_t
   uchr_t obj_data[8];
 };
 
-#define otag(o) (o)->obj_tag
+struct vobj_t
+{
+  RSP_VOBJECT_HEAD;
+  uchr_t vobj_data[16];
+};
+
+#define vflags(o)  (o)->obj_vflags
+#define otpkey(o)  (o)->obj_tpkey
+#define hflags(o)  (o)->obj_hflags
+#define lflags(o)  (o)->obj_lflags
+#define osize(o)   (o)->obj_size
 
 /* structs to represent builtin object types */
 // untagged objects
@@ -248,15 +227,18 @@ struct list_t
 #define pcar(p) (p)->car
 #define pcdr(p) (p)->cdr
 
-// the generic tuple is the building block for most extension types
-struct tuple_t
+// the generic tuple and ftuple are the building blocks for various extension types
+struct ftuple_t
 {
   RSP_OBJECT_HEAD;
   val_t elements[1];
 };
 
-#define tuple_szdata(t) (t)->obj_wfield
-#define tuple_flags(t)  (t)->obj_lflags
+struct tuple_t
+{
+  RSP_VOBJECT_HEAD;
+  val_t elements[2];
+};
 
 struct table_t
 {
@@ -266,40 +248,22 @@ struct table_t
   val_t free;            // a linked list of free table nodes
 };
 
-#define tb_flags(d)     (d)->obj_hflags
-#define tb_levels(d)    (d)->obj_lflags
 #define tb_mapping(d)   (d)->mapping
 #define tb_nkeys(d)     (d)->nkeys
-#define tb_ordkeys(d)   (d)->ordkeys
+#define tb_free(d)      (d)->free
+
+const uint8_t MAX_TB_ND_LEVELS = 13;
 
 struct atom_t
 {
   RSP_OBJECT_HEAD;
-  chr_t atm_chrs[8];
+  hash32_t hash;
+  chr_t atm_name[4];
 };
 
-#define atm_hash(a)  (a)->obj_wfield
-#define atm_flags(a) (a)->obj_lflags
-#define atm_name(a)  &((a)->atm_chrs[0])
-
-// hash_t structs store the keys for table types (and also the bindings, if the table stores bindings)
-// collisions are resolved with linear probing (for now)
-// the common hash is stored in the wide field of the object head, and the number of records in the node is
-// stored in the 16-bit field
-struct hash_t
-{
-  RSP_OBJECT_HEAD;
-  val_t keys[1];
-};
-
-struct ihash_t
-{
-  RSP_OBJECT_HEAD;
-  atom_t* keys[1];
-};
-
-#define hash_common_hash(v) (v)->obj_wfield
-#define hash_nkeys(v)       (v)->obj_hflags
+#define atom_hash(a)  (a)->hash
+#define atom_flags(a) (a)->obj_lflags
+#define atom_name(a)  &((a)->atm_name[0])
 
 typedef enum
   {
@@ -317,20 +281,19 @@ struct str_t
 
 struct bstr_t
 {
-  RSP_OBJECT_HEAD;
-  uptr_t nbytes;
+  RSP_VOBJECT_HEAD;
   uchr_t bytes[8];
 };
 
-#define str_chars(s)   (s)->str_chrs
-#define bstr_nbytes(b) (b)->nbytes
-#define bstr_bytes(b)  (b)->bytes
+#define str_chars(s)   &((s)->str_chrs[0])
+#define bstr_nbytes(b) (b)->size
+#define bstr_bytes(b)  &((b)->bytes[0])
 
 
 /* core metaobject */
 struct type_t {
   RSP_OBJECT_HEAD;
-  uint32_t  tp_tp_key;     // the appropriate type key for objects of this type
+  tpkey_t   tp_tp_key;     // the appropriate type key for objects of this type
   hash32_t  tp_hash;       // the hash for this type
   /* general predicates */
 

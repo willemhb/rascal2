@@ -26,9 +26,9 @@ uint64_t cpow2_64(int64_t);
 uint64_t clog2(uint64_t);
 
 // string and character utilities
-hash32_t hash_string(const chr_t*);
-hash32_t hash_bytes(const uchr_t*,size_t);
-hash32_t rehash(hash32_t,uint32_t);
+hash64_t hash_string(const chr_t*);
+hash64_t hash_bytes(const uchr_t*,size_t);
+hash64_t rehash(hash64_t,uint32_t);
 int32_t strsz(const chr_t*);
 int32_t u8strlen(const chr_t*);
 int32_t u8strcmp(const chr_t*,const chr_t*);
@@ -55,7 +55,8 @@ rsp_ectx_t* rsp_restorestate(rsp_ectx_t*);
 /* util/rbits.c */
 // checking tags, getting type information
 uint32_t ltag(val_t);
-uint32_t tpkey(val_t);
+tpkey_t  tpkey(val_t);
+uint8_t  vmflags(obj_t*);
 type_t*  val_type(val_t);              // get the type object associated with the value
 size_t   val_size(val_t);              // get the size of an object in bytes
 chr_t*   val_typename(val_t);
