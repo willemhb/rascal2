@@ -33,16 +33,16 @@ const val_t R_GLOBAL_VALUES[16] =  {
   0,
   NONE,
   OBJ,
-  SHIFTED_1 | BOOL,
-  BOOL,
-  INT,
-  SHIFTED_1      | INT,
-  SHIFTED_2      | INT,
-  SHIFTED_WEOF   | CHAR,
-  SHIFTED_NAN    | FLOAT,
-  SHIFTED_MNAN   | FLOAT,
-  SHIFTED_INF    | FLOAT,
-  SHIFTED_MINF   | FLOAT,
+  SHIFTED_1 | LT_BOOL,
+  LT_BOOL,
+  LT_INT,
+  SHIFTED_1      | LT_INT,
+  SHIFTED_2      | LT_INT,
+  SHIFTED_WEOF   | LT_CHAR,
+  SHIFTED_NAN    | LT_FLOAT,
+  SHIFTED_MNAN   | LT_FLOAT,
+  SHIFTED_INF    | LT_FLOAT,
+  SHIFTED_MINF   | LT_FLOAT,
 };
 
 // other constants (initialized at startup)
@@ -89,13 +89,12 @@ const chr_t* BUILTIN_TYPE_NAMES[16] =
 };
 
 // main memory
- // RAM is the main HEAP; FREE is the address of the next free cons cell; toffset is used to reallocate a block before GC if the reallocation would trigger a collection
 extern unsigned char *RAM, *FREE, *EXTRA;
-extern val_t HEAPSIZE, STACKSIZE, DUMPSIZE;
-const float RAM_LOAD_FACTOR = 0.6;
+extern val_t HEAPSIZE, STACKSIZE, HEAPCRITICAL;
+const float RAM_LOAD_FACTOR = 0.8;
 extern bool GROWHEAP, GREWHEAP;
 
-// the main registers are typed for correctness and faster execution speed
+// stack and registers
 extern val_t *STACK;
 extern val_t REGISTERS[16];
 
@@ -104,11 +103,11 @@ extern val_t REGISTERS[16];
 #define ENVT            REGISTERS[1]
 #define CODE            REGISTERS[2]
 #define CONT            REGISTERS[3]
-#define SB              REGISTERS[4]       // stack base
-#define SP              REGISTERS[5]       // stack top
-#define PC              REGISTERS[6]       // program counter
-#define OP              REGISTERS[7]       // current instruction
-#define ARG(x)          REGISTERS[8 + (x)] // operands for bytecode instructons
+#define SB              REGISTERS[4]        // stack base
+#define SP              REGISTERS[5]        // stack top
+#define PC              REGISTERS[6]        // program counter
+#define OP              REGISTERS[7]        // current instruction
+#define ARG(x)          REGISTERS[8 + (x)]  // bytecode operands
 #define TMP(x)          REGISTERS[12 + (x)] // auxilliary registers
 
 // flags for bitmapping the main registers
@@ -154,6 +153,7 @@ typedef enum
   ARITY_ERR,   // wrong argument count
   SYNTAX_ERR,  // bad syntax
   NAME_ERR,    // attempt to rebind a constant
+  
   IO_ERR,
 } rsp_err_t;
 
@@ -165,7 +165,6 @@ const chr_t* ERROR_NAMES[] =
   "envt", "value", "bounds", "arity",
   "syntax", "name", "io",
 };
-
 
 #define ERRINFO_FMT     "[%s:%i:%s] %s error: "
 #define ERR_FMT         "%s"

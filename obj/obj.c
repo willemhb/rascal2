@@ -1,10 +1,5 @@
 #include "../include/rsp_core.h"
 
-/* module internal declarations */
-bool     check_btuple_index(uint32_t,uint32_t);
-int32_t  get_btuple_index(uint32_t,uint32_t);
-
-
 /* object constructors */
 list_t* mk_list(size_t argc, val_t* args)
 {
@@ -13,9 +8,8 @@ list_t* mk_list(size_t argc, val_t* args)
 
   else
     {
-      pair_t* curr;
-      vm_allocc(argc,&curr,0);
-      pair_t* out = curr;
+      pair_t* out = vm_allocc(argc);
+      pair_t* curr = out;
       size_t i = 1;
       for (; i < argc - 1; i++, curr++)
     {
@@ -32,9 +26,7 @@ list_t* mk_list(size_t argc, val_t* args)
 
 pair_t* mk_pair(val_t ca, val_t cd)
 {
-  pair_t* hd;
-
-  vm_allocc(1,&hd,2,&ca,&cd);
+  pair_t* hd = vm_allocc(1);
 
   car_(hd) = ca;
   cdr_(hd) = cd;
@@ -42,30 +34,96 @@ pair_t* mk_pair(val_t ca, val_t cd)
 return (pair_t*)hd;
 }
 
-tuple_t* mk_tuple(size_t n, uint8_t fl, uint8_t t)
+ftuple_t* mk_ftuple(size_t n, uint8_t fl, tpkey_t t)
 {
-  tuple_t* new;
-  vm_allocw(1,n,&new,0);
-  tuple_szdata(new) = 0;
-  otag(new) = t;
-  tuple_flags(new) = fl;
+  n = max(n,1ul);
+  ftuple_t* new = vm_allocw(8,n);
+  otpkey(new) = t;
+  lflags(new) = fl;
   // initialize all elements to NIL
   memset((uchr_t*)tuple_data(new),0,n*8);
 
   return new;
 }
 
+tuple_t* mk_tuple(size_t n, uint8_t fl, tpkey_t t)
+{
+  n = max(n,2ul);
+  tuple_t* new = vm_allocw(16,n);
+  osize(new) = n;
+  otpkey(new) = t;
+  lflags(new) = fl;
+  // initialize all elements to NIL
+  memset((uchr_t*)tuple_data(new),0,n*8);
+
+  return new;
+}
+
+btuple_t* mk_btuple(uint32_t n, uint8_t fl, tpkey_t t)
+{
+  n = min(32u,cpow2_32(n));
+  btuple_t* out = vm_allocw(16,n);
+  bt_allcsz(out) = n;
+  bt_btmp(out) = 0;
+  memset((uchr_t*)tuple_data(out),0,n*8);
+  otpkey(out) = t;
+  lflags(out) = fl;
+
+  return out;
+}
+
+btuple_t* mk_gl_btuple(uint32_t n, uint8_t fl, tpkey_t t)
+{
+  n = min(32u,cpow2_32(n));
+  btuple_t* out = vm_cmalloc(16 + n * 8);
+  bt_allcsz(out) = n;
+  bt_btmp(out) = 0;
+  memset((uchr_t*)tuple_data(out),0,n*8);
+  otpkey(out) = t;
+  lflags(out) = fl;
+
+  return out;
+}
+
 /* tuple sizing */
-inline size_t _tuple_size(obj_t* t) { return 8 * _tuple_elcnt(t); }
-inline size_t _btuple_elcnt(obj_t* t) { return __builtin_popcount(tuple_szdata(t)); }
+inline size_t _tuple_size(obj_t* t)
+{
+  tpkey_t tk = otpkey(t);
+
+  switch (tk)
+    {
+    case FTUPLE: default:
+      return 8 * get_type(tk)->tp_nfields;
+
+    case NTUPLE:
+      return 8 * ((vobj_t*)t)->obj_size;
+
+    case DLEAF:
+      return 16 * ((btuple_t*)t)->bt_size;
+
+    case SLEAF: case ILEAF:
+    case BTUPLE ... INODE:
+      return 8 * ((btuple_t*)t)->bt_size;
+    }
+}
 
 size_t _tuple_elcnt(obj_t* t)
 {
-  if (otag(t) == BTUPLE)
-    return _btuple_elcnt(t);
+  tpkey_t tk = otpkey(t);
+  switch (tk)
+    {
+      case FTUPLE: default:
+      return get_type(tk)->tp_nfields;
 
-  else
-    return tuple_szdata(t);
+    case NTUPLE:
+      return ((vobj_t*)t)->obj_size;
+
+    case SLEAF ... ILEAF:
+      return ((btuple_t*)t)->bt_size;
+
+    case BTUPLE ... INODE:
+      return __builtin_popcount(((btuple_t*)t)->bt_map);
+    }
 }
 
 /* tuple accessors */
@@ -74,78 +132,6 @@ inline val_t* _tuple_data(obj_t* t)
   return (val_t*)(&(t->obj_data[0]));
 }
 
-bool check_btuple_index(uint32_t bmp, uint32_t ref)
-{
-  return bmp & (1<<ref);
-}
-
-int32_t tuple_check_idx(tuple_t* t, val_t** rslt, uint32_t idx)
-{
-  if (idx > 31)
-    {
-      *rslt = NULL;
-      return -1;
-    }
-
-  val_t* cells = tuple_data(t);
-
-  if (otag(t) == TUPLE)
-    *rslt = cells + idx;
-
-  else
-    {
-      int32_t bidx = get_btuple_index(tuple_szdata(t),idx);
-      if (bidx == -1)
-	{
-	  *rslt = NULL;
-	  return 3;
-	}
-      
-      else
-	{
-	  *rslt = cells + bidx;
-	}
-    }
-  
-  if (isnil(**rslt))
-    return 0;
-
-  else if (islist(**rslt))
-    return 1;
-
-  else
-    return 2;
-}
-
-int32_t get_btuple_index(uint32_t bmp, uint32_t ref)
-{
-  if (check_btuple_index(bmp,ref))
-    return __builtin_popcount(bmp & ((1<<ref) - 1));
-
-  else
-    return -1;
-}
-
-val_t* tuple_ref(tuple_t* t, uint32_t idx)
-{
-  if (otag(t) == TUPLE)
-    if (idx < tuple_szdata(t))
-      return tuple_data(t) + idx;
-
-    else
-      return NULL;
-
-  else
-    {
-      int32_t ref = get_btuple_index(tuple_szdata(t),idx);
-
-      if (ref == -1)
-	return NULL;
-
-      else
-	return tuple_data(t) + idx;
-    }
-}
 
 /* gc functions */
 val_t copy_pair(type_t* to, val_t v, uchr_t** tos)
@@ -252,22 +238,15 @@ int32_t ord_tuple(val_t tx, val_t ty)
 
 list_t* list_append(list_t** ls, val_t v)
 {
-  list_t* lsv = *ls;
-  val_t lsbuf = (val_t)(lsv);
-  pair_t* new;
-
-  if (vm_allocc(1,&new,2,&lsbuf,&v))
-    {
-      lsv = ptr(list_t*,lsbuf);
-      *ls = lsv;
-    }
+    pair_t* new = mk_pair(v,R_NIL);
 
     while (*ls)
       ls = &pcdr(*ls);
 
-    *ls = mk_list(1,&v);
+    
+    *ls = (list_t*)new;
 
-    return (*ls);
+    return *ls;
 }
 
 /* printing */

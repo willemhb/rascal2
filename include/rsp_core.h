@@ -26,9 +26,9 @@ uint64_t cpow2_64(int64_t);
 uint64_t clog2(uint64_t);
 
 // string and character utilities
-hash64_t hash_string(const chr_t*);
-hash64_t hash_bytes(const uchr_t*,size_t);
-hash64_t rehash(hash64_t,uint32_t);
+hash32_t hash_string(const chr_t*);
+hash32_t hash_bytes(const uchr_t*,size_t);
+hash32_t rehash(hash32_t,uint32_t);
 int32_t strsz(const chr_t*);
 int32_t u8strlen(const chr_t*);
 int32_t u8strcmp(const chr_t*,const chr_t*);
@@ -55,22 +55,37 @@ rsp_ectx_t* rsp_restorestate(rsp_ectx_t*);
 /* util/rbits.c */
 // checking tags, getting type information
 uint32_t ltag(val_t);
-tpkey_t  tpkey(val_t);
+tpkey_t  v_tpkey(val_t);
+tpkey_t  o_tpkey(obj_t*);
+tpkey_t  g_tpkey(void*);
 uint8_t  vmflags(obj_t*);
-type_t*  val_type(val_t);              // get the type object associated with the value
-size_t   val_size(val_t);              // get the size of an object in bytes
+type_t*  val_type(val_t);              // get the type object
+type_t*  tk_type(tpkey_t);
+size_t   val_size(val_t);              // get the size of a value
 chr_t*   val_typename(val_t);
 chr_t*   tp_typename(type_t*);
+chr_t*   tk_typename(tpkey_t);
 
 #define type_name(v)              \
   _Generic((v),                   \
-    type_t*:tp_typename,          \
+           type_t*:tp_typename,   \
+	   tpkey_t:tk_typename,	  \
 	   val_t:val_typename)(v)
 
+#define get_type(v)               \
+  _Generic((v),                   \
+           tpkey_t:tk_type,       \
+           val_t:val_type)(v)
+
+#define tpkey(v)                  \
+  _Generic((v),                   \
+    val_t:v_tpkey,                \
+    obj_t:o_tpkey,                \
+	   default:g_tpkey)(v)
 
 // handling fptrs
-val_t    trace_fp(val_t);              // recursively follow a forward pointer (generally safe)
-val_t    update_fp(val_t*);            // recursively update a forward pointer (generally safe)
+val_t    trace_fp(val_t);   // recursively follow a forward pointer
+val_t    update_fp(val_t*); // recursively update a forward pointer
 
 // global value predicates
 bool isnil(val_t);
@@ -80,22 +95,60 @@ bool isfptr(val_t);
 bool isunbound(val_t);
 bool isreof(val_t);
 
-// type predicates
+// single dispatch type predicates
 bool     ispair(val_t);
 bool     islist(val_t);
-bool     istuple(val_t);
-bool     isbtuple(val_t);
-bool     isstr(val_t);
-bool     isbstr(val_t);
-bool     isatom(val_t);
-bool     issym(val_t);
-bool     isdict(val_t);
 bool     isiostrm(val_t);
 bool     isbool(val_t);
 bool     ischar(val_t);
 bool     isint(val_t);
 bool     isfloat(val_t);
-bool     istype(val_t);
+bool     isobj(val_t);
+
+// multiple dispatch type predicates
+bool     v_istuple(val_t);
+bool     v_isntuple(val_t);
+bool     v_isbtuple(val_t);
+bool     v_isstr(val_t);
+bool     v_isbstr(val_t);
+bool     v_isatom(val_t);
+bool     v_istable(val_t);
+bool     v_isset(val_t);
+bool     v_isdict(val_t);
+bool     v_istype(val_t);
+bool     o_istuple(obj_t*);
+bool     o_isntuple(obj_t*);
+bool     o_isbtuple(obj_t*);
+bool     o_isstr(obj_t*);
+bool     o_isbstr(obj_t*);
+bool     o_isatom(obj_t*);
+bool     o_istable(obj_t*);
+bool     o_isset(obj_t*);
+bool     o_isdict(obj_t*);
+bool     o_istype(obj_t*);
+bool     g_istuple(void*);
+bool     g_isntuple(void*);
+bool     g_isbtuple(void*);
+bool     g_isstr(void*);
+bool     g_isbstr(void*);
+bool     g_isatom(void*);
+bool     g_istable(void*);
+bool     g_isset(void*);
+bool     g_isdict(void*);
+bool     g_istype(void*);
+
+#define GEN_PRED(v,tp) _Generic((v), val_t:v_is##tp, obj_t*:o_is##tp,default:g_is##tp)(v)
+
+#define istuple(v)  GEN_PRED(v,tuple)
+#define isntuple(v) GEN_PRED(v,ntuple)
+#define isbtuple(v) GEN_PRED(v,btuple)
+#define isstr(v)    GEN_PRED(v,str)
+#define isbstr(v)   GEN_PRED(v,bstr)
+#define isatom(v)   GEN_PRED(v,atom)
+#define istable(v)  GEN_PRED(v,table)
+#define isset(v)    GEN_PRED(v,set)
+#define isdict(v)   GEN_PRED(v,dict)
+#define istype(v)   GEN_PRED(v,type)
 
 // general predicates
 bool     isa(val_t,type_t*);
@@ -113,7 +166,6 @@ size_t   rsp_asize(val_t);
 size_t   rsp_elcnt(val_t);
 val_t*   rsp_fields(val_t);
 val_t*   rsp_elements(val_t);
-
 bool     cbool(val_t);                 
 void     prn_value(val_t,iostrm_t*);
 void     vm_prn(val_t,iostrm_t*);
@@ -127,7 +179,10 @@ pair_t*   topair( SAFECAST_ARGS );
 str_t*    tostr( SAFECAST_ARGS );
 atom_t*   toatom( SAFECAST_ARGS );
 iostrm_t* toiostrm( SAFECAST_ARGS );
-tuple_t*  totuple( SAFECAST_ARGS );
+ftuple_t* totuple( SAFECAST_ARGS );
+tuple_t*  tontuple( SAFECAST_ARGS );
+btuple_t* tobtuple( SAFECAST_ARGS );
+table_t*  totable( SAFECAST_ARGS );
 set_t*    toset( SAFECAST_ARGS );
 dict_t*   todict( SAFECAST_ARGS );
 type_t*   totype( SAFECAST_ARGS );
@@ -140,18 +195,18 @@ type_t*   totype(SAFECAST_ARGS );
 
 /* object apis - obj/ */
 // memory management (mem.c)
-void*    vm_cmalloc(uint64_t);       
-int32_t  vm_cfree(void*); 
-uchr_t*  vm_crealloc(void**,uint64_t,bool); 
-bool     vm_alloc(size_t,size_t,size_t,void*,size_t,...);
-bool     vm_realloc(size_t,size_t,size_t,val_t*,size_t,...);
+void*    vm_cmalloc(uint64_t);
+int32_t  vm_cfree(void*);
+void*    vm_crealloc(void*,uint64_t,bool);
+void*    vm_alloc(size_t,size_t,size_t);
+void*    vm_realloc(val_t,size_t,size_t);
 size_t   calc_mem_size(size_t);
-bool     gc_check(size_t,bool);
+bool     gc_check(void);
 void     gc_resize(void);
-void     gc_run(void);                                // run the garbage collector
+void     gc_run(void);
 val_t    gc_trace(val_t);
-val_t    gc_copy(type_t*,val_t);                      // the generic copier
-bool     p_in_heap(void* v, uchr_t* h, uint64_t sz);  // check if h <= addr(v) <= (h + sz)
+val_t    gc_copy(type_t*,val_t);
+bool     p_in_heap(void*v,uchr_t*h,uint64_t sz);
 bool     v_in_heap(val_t v, uchr_t* h, uint64_t sz);
 
 #define in_heap(v,u,sz)                            \
@@ -160,21 +215,21 @@ bool     v_in_heap(val_t v, uchr_t* h, uint64_t sz);
 	   default:p_in_heap)(v,u,sz)
 
 // lists, pairs, and tuples (obj.c)
-list_t*   mk_list(size_t,val_t*);
-pair_t*   mk_pair(val_t,val_t);
-tuple_t*  mk_tuple(size_t,uint8_t,uint8_t);
-size_t    _tuple_size(obj_t*);
-size_t    _tuple_elcnt(obj_t*);
-size_t    _btuple_elcnt(obj_t*);
-val_t*    _tuple_data(obj_t*);
+list_t*    mk_list(size_t,val_t*);
+pair_t*    mk_pair(val_t,val_t);
+ftuple_t*  mk_ftuple(size_t,uint8_t,tpkey_t);
+tuple_t*   mk_tuple(size_t,uint8_t,tpkey_t);
+btuple_t*  mk_btuple(uint32_t,uint8_t,tpkey_t);
+btuple_t*  mk_gl_btuple(uint32_t,uint8_t,tpkey_t);
+
+size_t     _tuple_size(obj_t*);
+size_t     _tuple_elcnt(obj_t*);
+val_t*     _tuple_data(obj_t*);
 
 #define tuple_size(t)   _tuple_size((obj_t*)t)
 #define tuple_elcnt(t)  _tuple_elcnt((obj_t*)t)
-#define btuple_elcnt(t) _btuple_elcnt((obj_t*)t)
 #define tuple_data(t)   _tuple_data((obj_t*)t)
 
-val_t*    tuple_ref(tuple_t*,uint32_t);
-int32_t   tuple_check_idx(tuple_t*,val_t**,uint32_t);
 val_t     copy_pair(type_t*,val_t,uchr_t**);
 val_t     copy_tuple(type_t*,val_t,uchr_t**);
 hash32_t  hash_pair(val_t);
@@ -206,20 +261,20 @@ void      prn_atom(val_t,iostrm_t*);
 chr_t*    strval(val_t);
 
 // tables, sets, and dicts (table.c)
-table_t*   mk_table(uint16_t,uint8_t,bool);
+table_t*   mk_table(size_t,tpkey_t);
 dict_t*    mk_dict(size_t);
 set_t*     mk_set(size_t);
 val_t      copy_table(type_t*,val_t);
-list_t*    tb_bindings(table_t*);
-list_t*    tb_bindings_tail(table_t*);
-list_t*    tb_lookup(table_t*,val_t);
-list_t*    tb_addkey(table_t*,val_t);
+val_t*     tb_lookup(table_t*,val_t);
+val_t*     tb_addkey(table_t*,val_t);
+val_t*     tb_setkey(table_t*,val_t,val_t);
+val_t*     tb_rmvkey(table_t*,val_t);
 void       prn_dict(val_t,iostrm_t*);
 void       prn_set(val_t,iostrm_t*);
 atom_t*    mk_atom(chr_t*,uint16_t);
 atom_t*    intern_string(chr_t*,hash32_t,uint16_t);
 
-// 
+// callable types
 
 // direct data (direct.c)
 val_t     mk_bool(int32_t);
@@ -298,6 +353,7 @@ int rsp_main(int32_t,chr_t**);
 // compiler hint macros
 #define unlikely(x) __builtin_expect((x), 0)
 #define likely(x)   __builtin_expect((x), 1)
+#define popcount(x) __builtin_popcount(x)
 
 // type-generic min, max, and compare macros
 #define min(x,y)                     \
@@ -319,7 +375,7 @@ int rsp_main(int32_t,chr_t**);
      typeof(x) __x__ = x;                                \
      typeof(y) __y__ = y;                                \
      (__x__ < __y__ ? -1 : 0) || (__x__ > y ? 1 : 0);    \
-})
+  })
 
 /* bit manipulation macros for tagging, untagging, and testing */
 
@@ -344,9 +400,11 @@ int rsp_main(int32_t,chr_t**);
 #define cdr_(v)              (ptr(val_t*,v)[1])
 
 /* allocation macros */
-#define vm_allocw(bs,wds,p,n, ...) vm_alloc(bs,wds,8,p,n, ##__VA_ARGS__)
-#define vm_allocb(bs,nb,p,n, ...)  vm_alloc(bs,nb,1,p,n, ##__VA_ARGS__)
-#define vm_allocc(nc,p,n, ...)     vm_alloc(0,16,nc,p,n, ##__VA_ARGS__)
+#define vm_allocw(bs,wds)          vm_alloc(bs,wds,8)
+#define vm_allocb(bs,nb)           vm_alloc(bs,nb,1)
+#define vm_allocc(nc)              vm_alloc(0,16,nc)
+#define vm_reallocw(v,wds)         vm_realloc(v,wds,8)
+#define vm_reallocb(v,b)           vm_realloc(v,b,1)
 
 /* error handling macros */
 #define ecall(f, ...) f(__FILE__,__LINE__,__func__, ##__VA_ARGS__)

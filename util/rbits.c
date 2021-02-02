@@ -1,12 +1,13 @@
 #include "../include/rsp_core.h"
+#include "../include/describe.h"
 
 /* tag manipulation, type testing, pointer tracing */
 inline uint32_t ltag(val_t v) { return v & LTAG_MASK ; }
 
-uint32_t tpkey(val_t v)
+tpkey_t v_tpkey(val_t v)
 {
   if (!(v & PTR_MASK))
-    return NIL_TP;
+    return NIL;
 
   uint32_t n = ltag(v);
   switch (n)
@@ -14,24 +15,35 @@ uint32_t tpkey(val_t v)
       case DIRECT:
         return n >> 3;
 
-      case LIST:
-	return LIST_TP;
+    case LIST: case IOSTRM:
+      return n;
 
-      case IOSTRM:
-	return IOSTRM_TP;
-
-      case OBJHEAD:
-	return (v & 0xf8u) + NUM_DIRECT_TYPES;
+    case OBJHEAD:
+      return (v & HIGHMASK) >> 32;
 	
     case OBJ: default:
       v = ptr(val_t*,v)[0];
 
       if ((v & 0x7) == OBJHEAD)
-	return (v & 0xf8u) + NUM_DIRECT_TYPES;
+	return (v & HIGHMASK) >> 32;
 
       else
-	return PAIR_TP;
+	return PAIR;
     }
+}
+
+inline tpkey_t o_tpkey(obj_t* o)
+{
+  return o->obj_tpkey;
+}
+
+inline tpkey_t g_tpkey(void* v)
+{
+  if (!v)
+    return NIL;
+
+  else
+    return ((obj_t*)v)->obj_tpkey;
 }
 
 inline type_t* val_type(val_t v) { return GLOBAL_TYPES[tpkey(v)]; }
@@ -39,8 +51,21 @@ inline chr_t*  val_typename(val_t v) { return val_type(v)->name; }
 inline chr_t*  tp_typename(type_t* to) { return to->name; }
 
 /* predicates */
+inline bool isobj(val_t v)
+{
+  if (v & PTR_MASK)
+    switch (v & 0x7)
+      {
+      case OBJ: case LIST:
+	return true;
+      default:
+	return false;
+      }
 
-#define EQUALITY_PREDICATE(nm,value) inline bool is ##nm(val_t v) { return v == value ; }
+  else
+    return false;
+}
+
 
 EQUALITY_PREDICATE(nil,R_NIL)
 EQUALITY_PREDICATE(true,R_TRUE)
@@ -48,27 +73,26 @@ EQUALITY_PREDICATE(false,R_FALSE)
 EQUALITY_PREDICATE(unbound,R_UNBOUND)
 EQUALITY_PREDICATE(fptr,R_FPTR)
 EQUALITY_PREDICATE(reof,R_EOF)
-
-#define TPKEY_PREDICATE(nm,tv) inline bool is##nm(val_t v) { return tpkey(v) == tv; }
-
-TPKEY_PREDICATE(pair,PAIR_TP)
-TPKEY_PREDICATE(list,LIST_TP)
-TPKEY_PREDICATE(str,STR_TP)
-TPKEY_PREDICATE(bstr,BSTR_TP)
-TPKEY_PREDICATE(tuple,TUPLE_TP)
-TPKEY_PREDICATE(atom,ATOM_TP)
-TPKEY_PREDICATE(set,SET_TP)
-TPKEY_PREDICATE(dict,DICT_TP)
-TPKEY_PREDICATE(iostrm,IOSTRM_TP)
-TPKEY_PREDICATE(bool,BOOL_TP)
-TPKEY_PREDICATE(char,CHAR_TP)
-TPKEY_PREDICATE(int,INT_TP)
-TPKEY_PREDICATE(float,FLOAT_TP)
-TPKEY_PREDICATE(type,TYPE_TP)
+TPKEY_PREDICATE_SINGLE(pair,PAIR)
+TPKEY_PREDICATE_SINGLE(list,LIST)
+TPKEY_PREDICATE_SINGLE(iostrm,IOSTRM)
+TPKEY_PREDICATE_SINGLE(bool,BOOL)
+TPKEY_PREDICATE_SINGLE(char,CHAR)
+TPKEY_PREDICATE_SINGLE(int,INT)
+TPKEY_PREDICATE_SINGLE(float,FLOAT)
+TPKEY_PREDICATE(str,STR)
+TPKEY_PREDICATE(bstr,BSTR)
+TPKEY_PREDICATE(ntuple,NTUPLE)
+TPKEY_PREDICATE(atom,ATOM)
+TPKEY_PREDICATE(set,SET)
+TPKEY_PREDICATE(dict,DICT)
+TPKEY_PREDICATE(type,TYPE)
+TPKEY_RANGE_PREDICATE(tuple,FTUPLE,INODE)
+TPKEY_RANGE_PREDICATE(btuple,BTUPLE,INODE)
+TPKEY_RANGE_PREDICATE(table,TABLE,NMSPC)
 
 
 inline bool isa(val_t v, type_t* to) { return val_type(v) == to ; }
-inline bool isobj(val_t v) { return isallocated(v); }
 inline bool isempty(val_t v) { return v & PTR_MASK; }
 
 bool isallocated(val_t v)
@@ -181,42 +205,20 @@ size_t rsp_asize(val_t v)
   return bs;
 }
 
-/* safety functions */
-#define SAFECAST_PTR(ctype,rtype,test)	                                       \
-  ctype to ## rtype(const chr_t* fl, int32_t ln, const chr_t* fnc,val_t v)     \
-  {                                                                            \
-    if (!test(v))                                                              \
-  {                                                                            \
-    rsp_vperror(fl,ln,fnc,TYPE_ERR,rsp_efmt(TYPE_ERR),#rtype,type_name(v)) ;   \
-    rsp_raise(TYPE_ERR) ;						       \
-    return (ctype)0;                                                           \
-  }                                                                            \
-    return ptr(ctype,trace_fp(v));					       \
-  }
-
-#define SAFECAST_VAL(ctype,rtype,test,cnvt)                                    \
-  ctype to ## rtype(const chr_t* fl, int32_t ln, const chr_t* fnc,val_t v)     \
-  {                                                                            \
-    if (!test(v))                                                              \
-  {                                                                            \
-    rsp_vperror(fl,ln,fnc,TYPE_ERR,rsp_efmt(TYPE_ERR),#rtype,type_name(v)) ;   \
-    rsp_raise(TYPE_ERR) ;						       \
-    return (ctype)0;                                                           \
-  }                                                                            \
-    return cnvt(v);							       \
-  }
-
 // fucking all of the safecast macros
 SAFECAST_PTR(list_t*,list,islist)
 SAFECAST_PTR(pair_t*,pair,ispair)
-SAFECAST_PTR(str_t*,str,isstr)
-SAFECAST_PTR(bstr_t*,bstr,isbstr)
+SAFECAST_PTR(str_t*,str,v_isstr)
+SAFECAST_PTR(bstr_t*,bstr,v_isbstr)
 SAFECAST_PTR(iostrm_t*,iostrm,isiostrm)
-SAFECAST_PTR(atom_t*,atom,isatom)
-SAFECAST_PTR(tuple_t*,tuple,istuple)
-SAFECAST_PTR(set_t*,set,isset)
-SAFECAST_PTR(dict_t*,dict,isdict)
-SAFECAST_PTR(type_t*,type,istype)
+SAFECAST_PTR(atom_t*,atom,v_isatom)
+SAFECAST_PTR(ftuple_t*,tuple,v_istuple)
+SAFECAST_PTR(tuple_t*,ntuple,v_isntuple)
+SAFECAST_PTR(btuple_t*,btuple,v_isbtuple)
+SAFECAST_PTR(table_t*,table,v_istable)
+SAFECAST_PTR(set_t*,set,v_isset)
+SAFECAST_PTR(dict_t*,dict,v_isdict)
+SAFECAST_PTR(type_t*,type,v_istype)
 SAFECAST_VAL(rint_t,int,isint,ival)
 SAFECAST_VAL(rflt_t,float,isfloat,fval)
 SAFECAST_VAL(rchr_t,char,ischar,cval)

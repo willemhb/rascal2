@@ -18,7 +18,7 @@
 static inline void grow_stack(void)
 {
   STACKSIZE *= 2;
-  vm_crealloc((void**)&STACK,STACKSIZE*8,false);
+  STACK = vm_crealloc(STACK,STACKSIZE*8,false);
   return;
 }
   

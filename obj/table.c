@@ -1,54 +1,13 @@
 #include "../include/rsp_core.h"
-
-typedef enum
-  {
-    INDEX_OUT_OF_RANGE = -1,
-    INDEX_FREE         =  0,
-    INDEX_BOUND_KEYS   =  1,
-    INDEX_BOUND_TABLE  =  2,
-    INDEX_FREE_BTUPLE  =  3,
-  } tb_lookup_rslt_t;
-
-val_t*   tbnode_split(val_t*,list_t*,val_t,hash32_t,val_t,hash32_t,uint8_t);
-val_t*   tbnode_addkey(table_t*,tuple_t**,val_t,hash32_t);
-val_t*   tbnode_realloc(tuple_t**,uint32_t);
-
-uint32_t local_idx(hash32_t h, uint8_t lvl)
-{
-  if (lvl > 6)
-    lvl &= 6;
-  return h >> (lvl * 5) & 0x1f;
-}
-
-val_t    set_getkey(val_t ks)
-{
-  return pcar(ptr(list_t*,ks));
-}
-
-val_t    dict_getkey(val_t ks)
-{
-  return pcar(ptr(pair_t*,pcar(ptr(list_t*,ks))));
-}
+#include "hamt.c"
 
 /* internal definitions */
 
-table_t* mk_table(uint16_t flags, uint8_t tp, bool global)
+table_t* mk_table(size_t nk, tpkey_t tp)
 {
-  table_t* new; tuple_t* lvl_0; pair_t* ord_k;
+  table_t* new; tuple_t* lvl_1; pair_t* ord_k;
 
-  if (global)
-    {
-      new = vm_cmalloc(sizeof(table_t));
-    }
-
-  else
-    {
-      // run the gc if there's not enough space to allocate the dict and one 32-node level
-      vm_allocw(1,39,NULL,1,0);
-      vm_allocw(1,3,&new,1,0);
-    }
-
-  lvl_0 = mk_tuple(32,0,TUPLE);
+  lvl_1 = mk_tuple(32,0,TUPLE);
   ord_k = mk_pair(R_NIL,R_NIL);
   tb_levels(new) = 1;
   tb_nkeys(new) = 0;
@@ -60,110 +19,7 @@ table_t* mk_table(uint16_t flags, uint8_t tp, bool global)
   return new;
 }
 
-tuple_t* mk_tbnode(size_t nk, uint8_t lvl)
-{
-  if (nk < 16)
-    return mk_tuple(nk,lvl,BTUPLE);
-
-  else
-    return mk_tuple(32,lvl,TUPLE);
-}
-
-
-val_t* tbnode_split(val_t* cell, list_t* orig, val_t ok, hash32_t ok_h, val_t nk, hash32_t nkh, uint8_t lvl)
-{
-  if (!orig)
-    { orig = ptr(list_t*,*cell);
-      ok = ispair(pcar(orig)) ? ptr(pair_t*,pcar(orig))->car : pcar(orig);
-      ok_h = extended_hash(rsp_hash(ok),lvl);
-    }
-
-  hash32_t enkh = extended_hash(nkh,lvl);
-
-  uint32_t oh_idx = local_idx(ok_h,lvl);
-  uint32_t nh_idx = local_idx(enkh,lvl);
-  tuple_t* new; val_t* out;
-
-  if (oh_idx == nh_idx)
-    {
-      new = mk_tbnode(1,lvl);
-      out = tbnode_split(tuple_data(new),orig,ok,ok_h,nk,nkh,lvl+1);
-      tuple_szdata(new) = 1 << oh_idx;
-      *cell = tag_p(new,OBJ);
-    }
-
-  else
-    {
-      new = mk_tbnode(2,lvl);
-      tuple_szdata(new) = (1 << oh_idx) | (1 << nh_idx);
-      *cell = tag_p(new,OBJ);
-
-      if (oh_idx < nh_idx)
-	{
-	  tuple_data(new)[0] = tag_p(orig,LIST);
-	  out = tuple_data(new) + 1;
-	}
-
-      else
-	{
-	  tuple_data(new)[1] = tag_p(orig,LIST);
-	  out = tuple_data(new);
-	}
-    }
-
-  return out;
-}
-
-val_t* tbnode_realloc(tuple_t** nd, uint32_t lidx)
-{
-  tuple_t* orig = *nd;
-  uint8_t obmp = tuple_szdata(orig), osz = tuple_size((obj_t*)orig);
-  tuple_t* new = mk_tbnode(osz+1, tbnd_level(orig));
-  val_t* old_els = tuple_data(orig);
-  val_t* new_els = tuple_data(new);
-  val_t* out;
-  uint8_t bmidx = (1 << lidx);
-
-  if (otag(new) == BTUPLE)
-    {
-      tuple_szdata(new) = obmp | bmidx;
-      for (uint8_t curr = 1, i = 0;i < osz + 1; curr <<= 1)
-	{
-	  if (obmp & curr)
-	    {
-	      new_els[i] = old_els[i];
-	      i++;
-	    }
-
-	  else if (bmidx & curr)
-	    {
-	      out = new_els + i;
-	      i++;
-	    }
-	}
-    }
-
-  else
-    {
-      for (uint8_t curr = 1, i = 0; i < 32; i++, curr <<= 1)
-	{
-	  if (obmp & curr)
-	    new_els[i] = old_els[i];
-
-	  else if (bmidx & curr)
-	    out = new_els + i;
-
-	  else
-	    continue;
-	}
-    }
-
-  *nd = new;
-  car_(orig) = R_FPTR;
-  cdr_(orig) = tag_p(new,OBJ);
-
-  return out;
-}
+table_t* 
 
 list_t* tb_bindings(table_t* d)
 {
@@ -198,38 +54,6 @@ list_t* tb_addkey_seq(table_t* tb, val_t k)
 
   tb_nkeys(tb)++;
   return out;
-}
-
-val_t* tbnode_addkey(table_t* tb, tuple_t** nd, val_t k, hash32_t h)
-{
-  uint8_t lvl = tbnd_level(*nd); hash32_t sh = extended_hash(h,lvl);
-  uint32_t loc_idx = local_idx(sh,lvl);
-  val_t* rslt; tuple_t* nb;
-
-  switch (tuple_check_idx(*nd,&rslt,loc_idx))
-    {
-    case INDEX_OUT_OF_RANGE:
-      rsp_raise(BOUNDS_ERR);
-      return NULL;
-
-    case INDEX_FREE:
-      return rslt;
-
-    case INDEX_BOUND_KEYS:
-      return tbnode_split(rslt,NULL,R_NIL,0,tbnd_level(*nd)+1,k,h);
-
-    case INDEX_BOUND_TABLE:
-      nb = ptr(tuple_t*,*rslt);
-      rslt = tbnode_addkey(tb,&nb,k,h);
-      return rslt;
-
-    case INDEX_FREE_BTUPLE:
-      rslt = tbnode_realloc(nd,loc_idx);
-      return rslt;
-
-    default:
-      return rslt;
-    }
 }
 
 list_t* tb_addkey(table_t* tb, val_t k)
