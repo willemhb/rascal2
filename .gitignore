@@ -7,7 +7,7 @@
 rascal
 
 # ignore core dumps
-/dumps/.core.*
+dumps/
 
 # ignore the contents of log
 log/*
