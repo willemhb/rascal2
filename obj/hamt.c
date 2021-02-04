@@ -24,9 +24,26 @@ inline uint32_t node_free(node_t* nd)
   return bt_allcsz(nd) - popcount(bt_btmp(nd));
 }
 
-inline uint8_t get_hash_chunk(node_t* nd, hash32_t h)
+inline uint32_t get_mask(hamt_lvl_t lvl)
+{
+  static const hamt_mask_t masks[7] =
+    {
+      0,
+      L1_MASK, L2_MASK, L3_MASK,
+      L4_MASK, L5_MASK, L6_MASK,
+    };
+
+  return masks[lvl];
+}
+
+inline uint8_t node_hash_chunk(node_t* nd, hash32_t h)
 {
   return (h >> ((nd_level(nd) - 1) * 5)) & 0x1f;
+}
+
+inline uint8_t lvl_hash_chunk(hamt_lvl_t l, hash32_t h)
+{
+  return (h >> (l - 1) * 5) & 0x1f;
 }
 
 inline uint8_t get_local_index(node_t* nd, uint8_t lcl)
@@ -38,12 +55,26 @@ inline uint8_t get_local_index(node_t* nd, uint8_t lcl)
     return lcl;
 }
 
-inline uint8_t find_split(hash32_t hx, hash32_t hy)
+inline uint8_t get_prefix(hamt_lvl_t lvl, hash32_t h)
 {
-  uint8_t lvl = 1; uint64_t mask = 0x1ful;
+  if (lvl == 1)
+    return (h >> 30);
 
-  for (;lvl < 8 && (hx & mask) != (hy & mask);mask <<= (lvl * 5), lvl++)
-    continue;
+  else
+    return (h >> (lvl - 2) * 5) & 0x1f;
+}
+
+inline bool check_prefix(node_t* n, hash32_t h)
+{
+  return get_hash_chunk(n,h) == nd_prefix(n);
+}
+
+inline uint8_t find_split(hash32_t hx, hash32_t hy, hamt_lvl_t lvl)
+{
+
+  for (hamt_mask_t m = get_mask(lvl);lvl < 7;lvl++,m=get_mask(lvl))
+    if ((hx & m) == (hy & m))
+      break;
 
   return lvl;
 }
@@ -75,33 +106,54 @@ val_t get_nd_index(node_t* n, hash32_t h)
 
 leaf_t* mk_leaf(hash32_t h, tpkey_t tp)
 {
-  uint8_t nkeys = 2;
-  uint8_t ncells = tp == DLEAF ? 4 : 2;
-  leaf_t* out = tp == ILEAF ? vm_cmalloc(16 + nkeys * 8) : vm_allocw(16,ncells);
+  tpkey_t ltk;
+  uint8_t nkeys = 2, ncells;
+  leaf_t* out;
+
+  if (tp == SNODE)
+    {
+      ltk = SLEAF;
+      ncells = 2;
+      out = vm_allocw(16,ncells);
+    }
+  
+  else if (tp == INODE)
+    {
+      ltk = ILEAF;
+      ncells = 2;
+      out = vm_cmalloc(32);
+    }
+
+  else
+    {
+      ltk = DLEAF;
+      ncells = 4;
+      out = vm_allocw(16,ncells);
+    }
+
   memset(tuple_data(out),0,ncells*8);
-  leaf_allocated(out) = 2;
+  leaf_allocated(out) = nkeys;
   leaf_free(out) = 2;
   leaf_hash(out) = h;
-  otpkey(out) = ILEAF;
-  nd_level(out) = 8;
+  otpkey(out) = ltk;
+  nd_level(out) = 7;
   
   return out;
 }
 
-node_t* mk_node(size_t nk, uint8_t lvl, tpkey_t tp)
+node_t* mk_node(size_t nk, uint8_t lvl, hash32_t h, tpkey_t tp)
 {
   node_t* out;
-
-  if (lvl == 7)
-    nk = min(nk,4u);
+  lvl = min(lvl,6u);
   
   if (tp == INODE)
     out = mk_gl_btuple(nk,lvl,tp);
 
   else
     out = mk_btuple(nk,lvl,tp);
-  
+
   nd_level(out) = lvl;
+  nd_prefix(out) = get_prefix(lvl,h);
 
   return out;
 }
@@ -141,41 +193,268 @@ leaf_t* leaf_realloc(leaf_t* orig)
   return new;
 }
 
-val_t* node_insert(node_t* n, val_t k, hash32_t h)
+val_t* leaf_split(val_t* sl, leaf_t* lf, tpkey_t tp, hamt_lvl_t l, val_t k, hash32_t h)
 {
-  
-  uint8_t chnk = get_hash_chunk(n,h);
-  uint8_t lcl_idx = get_local_index(n,chnk);
-  val_t*  nd_els = tuple_data(n); val_t occ;
+  node_t* new_nd = mk_node(2,l,h,tp);
+  leaf_t* new_lf = mk_leaf(h,tp);
 
-  if (bt_btmp(n) & chnk)
+  tuple_data(new_lf)[0] = k;
+  leaf_free(new_lf) = 1;
+
+  if (h < leaf_hash(lf))
     {
-      occ = nd_els[lcl_idx];
+      tuple_data(new_nd)[0] = tag_p(new_lf,OBJ);
+      tuple_data(new_nd)[1] = tag_p(lf,OBJ);
+    }
 
-      if (isleaf(occ))
+  else
+    {
+      tuple_data(new_nd)[0] = tag_p(lf,OBJ);
+      tuple_data(new_nd)[1] = tag_p(new_lf,OBJ);
+    }
+
+  bt_btmp(new_nd) = get_hash_chunk(l,h) | get_hash_chunk(leaf_hash(lf),h);
+
+  *sl = tag_p(new_nd,OBJ);
+
+  return tuple_data(new_lf);
+}
+
+val_t* node_split(val_t* sl, node_t* n, tpkey_t tp, hamt_lvl_t l, val_t k, hash32_t h)
+{
+  // TODO: check that this produces the correct prefix
+  node_t* new_nd = mk_node(2,l,h,tp);
+  leaf_t* new_lf = mk_leaf(h,tp);
+
+  tuple_data(new_lf)[0] = k;
+  leaf_free(new_lf) = 1;
+
+  if (nd_prefix(new_nd) < nd_prefix(n))
+    {
+      tuple_data(new_nd)[0] = tag_p(new_nd,OBJ);
+      tuple_data(new_nd)[1] = tag_p(n,OBJ);
+    }
+
+  else
+    {
+      tuple_data(new_nd)[0] = tag_p(n,OBJ);
+      tuple_data(new_nd)[1] = tag_p(new_nd,OBJ);
+    }
+
+  bt_btmp(new_nd) = nd_prefix(new_nd) | nd_prefix(n);
+
+  *sl = tag_p(new_nd,OBJ);
+
+  return tuple_data(new_lf);
+}
+
+val_t* hamt_insert(val_t* n, val_t k, hash32_t h, tpkey_t tk)
+{
+
+  leaf_t* lf;
+  node_t* n_nd, *nd = ptr(node_t*,*n);
+  
+
+  if (!nd)
+    {
+      n_nd = mk_node(2,1,h,tk);
+      lf = mk_leaf(h,tk);
+
+      if (tk != INODE)
+	tuple_data(lf)[0] = k;
+	
+      return tuple_data(lf);
+    }
+
+  else
+    {
+      hash32_t l_hsh;
+      uint8_t curr_lvl, new_lvl, lcl_idx, chnk;
+      val_t occ, *nd_els;
+
+      while (true)
 	{
-	  if (leaf_hash(ptr(leaf_t*,occ)) == h)
-	    return leaf_insert(ptr(leaf_t*,occ),k,h);
+	  curr_lvl = nd_level(nd);
+	  chnk = get_hash_chunk(nd,h);
+	  lcl_idx = get_local_index(nd,chnk);
+	  nd_els = tuple_data(n);
+
+	  if (bt_btmp(nd) & chnk)
+	    {
+	      occ = nd_els[lcl_idx];
+
+	      if (isleaf(occ))
+		{
+		  lf = ptr(leaf_t*,occ);
+		  l_hsh = leaf_hash(lf);
+		  new_lvl = find_split(h,l_hsh,curr_lvl);
+
+		  if (new_lvl == 7)
+		    {
+		      return leaf_insert(lf,nd_els+lcl_idx,k);
+		    }
+
+		  else
+		    return leaf_split(nd_els+lcl_idx,lf,otpkey(nd),new_lvl,k,h);
+		}
+
+	      else
+		{
+		  n_nd = ptr(node_t*,occ);
+
+		  if (check_prefix(n_nd,h))
+		    {
+		      nd = n_nd;
+		      n = nd_els + lcl_idx;
+		      continue;
+		    }
+
+		  else
+		    return node_split(nd_els+lcl_idx,n_nd,otpkey(nd),nd_level(nd)+1,k,h);
+		}
+	    }
 
 	  else
+	    return node_insert(nd,n,k,h);
+	}
+    }
+}
+
+val_t* node_insert(node_t* n, val_t* v, val_t k, hash32_t h)
+{
+  if (!node_free(n))
+    {
+      n = node_realloc(n);
+      *v = tag_p(n,OBJ);
+    }
+
+  uint8_t chnk = get_hash_chunk(n,h);
+  uint8_t idx = (1 << chnk);
+  leaf_t* nl = mk_leaf(tpkey(n),h);
+
+  if (tpkey(n) != INODE)
+    tuple_data(nl)[0] = k;
+
+  val_t* nels = tuple_data(n);
+
+  if (__builtin_ctz(idx) < __builtin_ctz(bt_btmp(n)))
+    {
+      nels[node_nkeys(n)] = tag_p(nl,OBJ);
+      bt_btmp(n) |= idx;
+      return tuple_data(nl);
+    }
+
+  bt_btmp(n) |= idx;
+  node_t* cn;
+  leaf_t* cl;
+  val_t cv;
+
+  for (size_t i = node_nkeys(n);; i--)
+    {
+      cv = nels[i-1];
+      nels[i] = cv;
+
+      if (isnode(cv))
+	{
+	  cn = ptr(node_t*,cv);
+	  if (nd_prefix(cn) > chnk)
 	    {
-	      
+	      nels[i-1] = tag_p(nl,OBJ);
+	      break;
+	    }
+	}
+
+      else if (isleaf(cv))
+	{
+	  cl = ptr(leaf_t*,cv);
+	  if (leaf_hash(cl) > h)
+	    {
+	      nels[i-1] = tag_p(nl,OBJ);
+	      break;
 	    }
 	}
     }
-  
-  else if (!node_free(n))
-    n = node_realloc(n);
 
+  return tuple_data(nl);
 }
 
-val_t* hamt_search(hamt_t* nd, val_t k, hash32_t h)
+
+val_t* leaf_insert(leaf_t* l, val_t* v, val_t k)
+{
+
+  size_t i;
+  if (isileaf(l))
+    {
+      val_t* atms = tuple_data(l);
+      chr_t* s = ptr(chr_t*,k);
+
+      for (i = 0; i < leaf_nkeys(l);i++)
+	{
+	  atom_t* curr = ptr(atom_t*,atms[i]);
+	  if (!strcmp(s,atom_name(curr)))
+	    return atms + i;
+	}
+
+      if (!leaf_free(l))
+	{
+	  l = leaf_realloc(l);
+	  *v = tag_p(l,OBJ);
+	  atms = tuple_data(l);
+	}
+      return atms + i;
+    }
+
+  else if (isdleaf(l))
+    {
+      val_t* keys = tuple_data(l);
+
+      for (i = 0; i < leaf_nkeys(l) * 2; i+= 2)
+	{
+	  val_t curr = keys[i];
+	  if (!compare(k,curr))
+	    return keys + i;
+	}
+
+      if (!leaf_free(l))
+	{
+	  l = leaf_realloc(l);
+	  *v = tag_p(l,OBJ);
+	  keys = tuple_data(l);
+	}
+
+      return keys + i;
+    }
+
+  else
+    {
+      val_t* keys = tuple_data(l);
+
+      for (i = 0; i < leaf_nkeys(l); i++)
+	{
+	  val_t curr = keys[i];
+	  if (!compare(k,curr))
+	    return keys + i;
+	}
+
+      if (!leaf_free(l))
+	{
+	  l = leaf_realloc(l);
+	  *v = tag_p(l,OBJ);
+	  keys = tuple_data(l);
+	}
+
+      return keys + i;
+    }
+}
+
+
+val_t* hamt_search(node_t* nd, val_t k, hash32_t h)
 {
   for (;nd;)
     {
       switch (otpkey(nd))
 	{
-	case NODE:
+	case INODE: case DNODE: case SNODE:
 	  if (check_index((node_t*)nd,h))
 	    nd = ptr(hamt_t*,get_nd_index((node_t*)nd,h));
 
@@ -236,160 +515,4 @@ val_t* ileaf_search(leaf_t* lf, chr_t* s, hash32_t h)
     }
 
   return NULL;
-}
-
-val_t* hamt_addkey(hamt_t** nd, val_t k, hash32_t h)
-{
-  for (;*nd;)
-      {
-      switch (otpkey(*nd))
-	{
-	case NODE:
-	  switch (check_index(*nd,h))
-	    {
-	    case INDEX_FREE:
-	      
-	    }
-
-	case SLEAF: case DLEAF:
-	  return leaf_search((leaf_t*)nd,k,h);
-
-	case ILEAF:
-	  return ileaf_search((leaf_t*)nd,(chr_t*)k,h);
-
-	default:
-	  nd = NULL;
-	  break;
-	}
-    }
-
-  return NULL;
-}
-
-val_t* tbnode_split(val_t* cell, list_t* orig, val_t ok, hash32_t ok_h, val_t nk, hash32_t nkh, uint8_t lvl)
-{
-  if (!orig)
-    { orig = ptr(list_t*,*cell);
-      ok = ispair(pcar(orig)) ? ptr(pair_t*,pcar(orig))->car : pcar(orig);
-      ok_h = extended_hash(rsp_hash(ok),lvl);
-    }
-
-  hash32_t enkh = extended_hash(nkh,lvl);
-
-  uint32_t oh_idx = local_idx(ok_h,lvl);
-  uint32_t nh_idx = local_idx(enkh,lvl);
-  tuple_t* new; val_t* out;
-
-  if (oh_idx == nh_idx)
-    {
-      new = mk_tbnode(1,lvl);
-      out = tbnode_split(tuple_data(new),orig,ok,ok_h,nk,nkh,lvl+1);
-      tuple_szdata(new) = 1 << oh_idx;
-      *cell = tag_p(new,OBJ);
-    }
-
-  else
-    {
-      new = mk_tbnode(2,lvl);
-      tuple_szdata(new) = (1 << oh_idx) | (1 << nh_idx);
-      *cell = tag_p(new,OBJ);
-
-      if (oh_idx < nh_idx)
-	{
-	  tuple_data(new)[0] = tag_p(orig,LIST);
-	  out = tuple_data(new) + 1;
-	}
-
-      else
-	{
-	  tuple_data(new)[1] = tag_p(orig,LIST);
-	  out = tuple_data(new);
-	}
-    }
-
-  return out;
-}
-
-val_t* tbnode_realloc(tuple_t** nd, uint32_t lidx)
-{
-  tuple_t* orig = *nd;
-  uint8_t obmp = tuple_szdata(orig), osz = tuple_size((obj_t*)orig);
-  tuple_t* new = mk_tbnode(osz+1, tbnd_level(orig));
-  val_t* old_els = tuple_data(orig);
-  val_t* new_els = tuple_data(new);
-  val_t* out;
-  uint8_t bmidx = (1 << lidx);
-
-  if (otag(new) == BTUPLE)
-    {
-      tuple_szdata(new) = obmp | bmidx;
-      for (uint8_t curr = 1, i = 0;i < osz + 1; curr <<= 1)
-	{
-	  if (obmp & curr)
-	    {
-	      new_els[i] = old_els[i];
-	      i++;
-	    }
-
-	  else if (bmidx & curr)
-	    {
-	      out = new_els + i;
-	      i++;
-	    }
-	}
-    }
-
-  else
-    {
-      for (uint8_t curr = 1, i = 0; i < 32; i++, curr <<= 1)
-	{
-	  if (obmp & curr)
-	    new_els[i] = old_els[i];
-
-	  else if (bmidx & curr)
-	    out = new_els + i;
-
-	  else
-	    continue;
-	}
-    }
-
-  *nd = new;
-  car_(orig) = R_FPTR;
-  cdr_(orig) = tag_p(new,OBJ);
-
-  return out;
-}
-
-
-val_t* tbnode_addkey(table_t* tb, tuple_t** nd, val_t k, hash32_t h)
-{
-  uint8_t lvl = tbnd_level(*nd); hash32_t sh = extended_hash(h,lvl);
-  uint32_t loc_idx = local_idx(sh,lvl);
-  val_t* rslt; tuple_t* nb;
-
-  switch (tuple_check_idx(*nd,&rslt,loc_idx))
-    {
-    case INDEX_OUT_OF_RANGE:
-      rsp_raise(BOUNDS_ERR);
-      return NULL;
-
-    case INDEX_FREE:
-      return rslt;
-
-    case INDEX_BOUND_KEYS:
-      return tbnode_split(rslt,NULL,R_NIL,0,tbnd_level(*nd)+1,k,h);
-
-    case INDEX_BOUND_TABLE:
-      nb = ptr(tuple_t*,*rslt);
-      rslt = tbnode_addkey(tb,&nb,k,h);
-      return rslt;
-
-    case INDEX_FREE_BTUPLE:
-      rslt = tbnode_realloc(nd,loc_idx);
-      return rslt;
-
-    default:
-      return rslt;
-    }
 }

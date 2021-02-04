@@ -275,6 +275,11 @@ atom_t*    mk_atom(chr_t*,uint16_t);
 atom_t*    intern_string(chr_t*,hash32_t,uint16_t);
 
 // callable types
+builtin_t* mk_builtin(void*,size_t,bool);
+closure_t* mk_closure(void*,nmspc_t*,envt_t*,size_t,uint16_t);
+method_t*  mk_method(code_t*,nmspc_t*,envt_t*,module_t*,size_t,uint16_t);
+val_t      call_builtin(builtin_t*,size_t,val_t*);
+int32_t    check_argco(obj_t*,size_t);
 
 // direct data (direct.c)
 val_t     mk_bool(int32_t);
@@ -294,18 +299,18 @@ val_t     val_ftoi(val_t);              // integer conversion
 /* 
    vm.c - environment API, the VM, and the compiler 
  */
+
+nmspc_t*  mk_nmspc(size_t,list_t*);
+envt_t*   mk_envt(size_t,envt_t*,module_t*);
 int32_t   env_locate(envt_t*,atom_t*,size_t*,size_t*);
 pair_t*   env_extend(envt_t*,atom_t*);
 size_t    env_bind(envt_t*,val_t);
 val_t     env_lookup(tuple_t*,size_t,size_t);
 val_t     env_assign(tuple_t*,size_t,size_t,val_t);
 
-// the virtual machine and compiler
-int32_t   vm_check_argco();
-bool      vm_check_bltn_argco();
-val_t     vm_call_bltn(r_cfun_t*,size_t,val_t*);           
-opcode_t  vm_fetch_instr();                             
-val_t     vm_exec(tuple_t*,tuple_t*);                         
+// the virtual machine and compiler           
+opcode_t  vm_fetch_instr();                     
+val_t     vm_exec(code_t*,envt_t*);
 code_t*   vm_compile(val_t,envt_t*,module_t*); 
 val_t     vm_expand(val_t,envt_t*,pair_t*);
 

@@ -30,19 +30,21 @@ typedef struct table_t table_t;
 typedef table_t set_t;
 typedef table_t dict_t;
 
+// VM types
+typedef struct builtin_t builtin_t;
+typedef struct method_t method_t;
+typedef ftuple_t code_t;
+typedef ftuple_t envt_t;
+typedef ftuple_t closure_t;
+typedef dict_t nmspc_t;
+typedef dict_t module_t;
+
 /* metaobjects */
 typedef struct type_t type_t;
 
 /* C data representations */
 typedef struct str_t   str_t;
 typedef struct bstr_t  bstr_t;
-
-// speciaized structures used by the VM
-typedef tuple_t envt_t;
-typedef tuple_t code_t;
-typedef dict_t  nmspc_t;
-typedef dict_t  module_t;
-typedef tuple_t closure_t;
 
 // valid function signatures for functions callable from within rascal
 typedef val_t (*r_cfun_t)(size_t,val_t*);
@@ -264,12 +266,11 @@ struct btuple_t
 struct table_t
 {
   RSP_OBJECT_HEAD;
-  val_t mapping;
   val_t nkeys;
-  val_t free;            // a linked list of free table nodes (unused)
-};
+  val_t lvl_one[4];     // values are first sorted into one of these buckets based on
+};                      // their most significant bits
 
-#define tb_mapping(d)   (d)->mapping
+#define tb_mapping(d)   &((d)->lvl_one[0])
 #define tb_nkeys(d)     (d)->nkeys
 #define tb_free(d)      (d)->free
 
