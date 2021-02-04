@@ -10,7 +10,7 @@ rascal
 dumps/
 
 # ignore the contents of log
-log/*
+log/
 
 # Prerequisites
 *.d
