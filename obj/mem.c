@@ -1,6 +1,47 @@
-#include "../include/rsp_core.h"
+#include "../include/mem.h"
 
-// memory management
+// stack manipulation
+inline void grow_stack()
+{
+  STACK = vm_crealloc(STACK,STACKSIZE*2,false);
+  STACKSIZE *= 2;
+  return;
+}
+
+inline val_t pop()
+{
+  assert(SP, BOUNDS_ERR);
+  return STACK[SP--];
+}
+
+inline val_t push(val_t v)
+{
+  if (SP >= STACKSIZE)
+    grow_stack();
+
+  STACK[++SP] = v;
+  return SP-1;
+}
+
+
+val_t pushn(size_t n)
+{
+  val_t out = SP;
+  if (SP + n >= STACKSIZE)
+    grow_stack();
+
+  SP += n;
+  return out;
+}
+
+
+void popn(size_t n)
+{
+  assert(SP - n > 0, BOUNDS_ERR);
+  SP -= n;
+  return;
+}
+
 
 /* memory management and bounds checking */
 size_t calc_mem_size(size_t nbytes) {
@@ -11,21 +52,26 @@ size_t calc_mem_size(size_t nbytes) {
   return basesz;
 }
 
+inline size_t val_asizeof(val_t v, type_t* to)
+{
+  return calc_mem_size(val_sizeof(v,to));
+}
+
 inline bool gc_check(void)
 {
 
   return FREE > (RAM + HEAPCRITICAL);
 }
 
-bool v_in_heap(val_t v, uchr_t* base, uint64_t heapsz)
+bool v_in_heap(val_t v, void* base, uint64_t heapsz)
 {
-  uptr_t a = addr(v), b = (uptr_t)base, c = (uptr_t)(base + heapsz * 8);
+  uptr_t a = addr(v), b = (uptr_t)base, c = (uptr_t)(b + heapsz * 8);
   return a >= b && a <= c;
 }
 
-bool p_in_heap(void* p, uchr_t* base, uint64_t heapsz)
+bool p_in_heap(void* p, void* base, uint64_t heapsz)
 {
-  uptr_t a = (uptr_t)p, b = (uptr_t)base, c = (uptr_t)(base + heapsz * 8);
+  uptr_t a = (uptr_t)p, b = (uptr_t)base, c = (uptr_t)(b + heapsz * 8);
   return a >= b && a <= c;
 }
 
@@ -72,13 +118,14 @@ void* vm_alloc(size_t bs, size_t elct, size_t elsz)
 
 void* vm_realloc(val_t v, size_t elct, size_t elsz)
 {
-  size_t allc_sz = calc_mem_size(get_type(v)->tp_base_size + elct * elsz);
-  size_t curr_sz = val_size(v);
+  type_t* to = val_type(v);
+  size_t curr_sz = val_asizeof(v,to);
+  size_t allc_sz = calc_mem_size(to->tp_base_sz + (elct * elsz));
 
-  if (curr_sz <= allc_sz)
+  if (curr_sz >= allc_sz)
     return ptr(void*,v);
 
-  uint8_t lt = v & 0x7;
+  ltag_t  lt = v & LTAG_MASK;
   uchr_t* new = FREE;
   uchr_t* old = ptr(uchr_t*,v);
   FREE += allc_sz;
@@ -140,16 +187,16 @@ val_t gc_copy(type_t* tp, val_t v)
 {
   val_t new; uchr_t* frm = ptr(uchr_t*,v);
   
-  if (tp->tp_copy)
-      new = tp->tp_copy(tp,v,&FREE);
+  if (tp->tp_relocate)
+      new = tp->tp_relocate(tp,v,&FREE);
 
   else
     {
-      size_t asz = rsp_asize(v);
-      size_t osz = rsp_size(v);
+      size_t asz = val_asizeof(v, tp);
+      size_t osz = val_sizeof(v, tp);
 
       memcpy(FREE,frm,osz);
-      new = vm_tag(tp,(val_t)FREE);
+      new = tag(FREE,tp);
 
       FREE += asz;
     }
@@ -162,11 +209,11 @@ val_t gc_copy(type_t* tp, val_t v)
 
 val_t gc_trace(val_t v)
 {
-  if (!isallocated(v) || in_heap(v,EXTRA,HEAPSIZE))
+  if (!isallocated(v, NULL) || in_heap(v,EXTRA,HEAPSIZE))
     return v;
 
   else if (isfptr(car_(v)))
-      return trace_fp(v);
+      return trace_fptr(v);
 
   else
     {

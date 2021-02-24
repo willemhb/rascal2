@@ -5,7 +5,7 @@
 
 /* 
    this file includes common headers, and a few redefinitions of builtin types.
- */
+*/
 
 #include <stdlib.h>
 #include <stdarg.h>
@@ -48,27 +48,13 @@ enum {
 
 // rationalized, explicitly sized types
 typedef uintptr_t uptr_t;
-typedef uint64_t hash64_t;    // a 64-bit hash
-typedef uint32_t hash32_t;    // a 32-bit hash
+typedef uint32_t hash_t;                 // a 32-bit hash
 typedef char chr_t;
 typedef unsigned char uchr_t;
 typedef wchar_t chr32_t;
-typedef wint_t ichr32_t;
+typedef wint_t cint32_t;
 typedef float flt32_t;
 typedef double flt64_t;
-typedef FILE iostrm_t;
-
-
-
-typedef struct _rsp_ectx_t {
-  jmp_buf buf;
-  struct _rsp_ectx_t* prev;
-  // all the shared global state that might have changed
-  uchr_t* free_state;
-  uptr_t   dp_state;
-  uptr_t rx_state[16];
-} rsp_ectx_t;
-
 
 /* end common.h */
 #endif

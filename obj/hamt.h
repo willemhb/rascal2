@@ -1,7 +1,7 @@
 #ifndef hamt_h
 
 #define hamt_h
-#include "../include/rsp_core.h"
+#include "../include/rascal.h"
 #include "../include/describe.h"
 
 /*
@@ -67,8 +67,6 @@ typedef enum
 
 // forward declarations
 
-
-
 uint32_t       leaf_nkeys(leaf_t*);
 uint32_t       node_nkeys(node_t*);
 uint32_t       node_free(node_t*);
@@ -78,7 +76,6 @@ uint8_t        lvl_hash_chunk(hamt_lvl_t,hash32_t);
 
 #define        get_hash_chunk(x,h)					\
   _Generic((x),node_t*:node_hash_chunk,hamt_lvl_t:lvl_hash_chunk)(x,h)
-
 
 
 uint8_t        get_local_index(node_t*,uint8_t);

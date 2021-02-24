@@ -5,44 +5,36 @@
 #include "common.h"
 #include "rtypes.h"
 
-/* 
-
-   this module includes declarations for important global variables, typedefs for enums mapping those variables, convenience macros accessing those variables, and a few
-   other enums used generally.
-
- */
-
 const val_t   HIGHMASK      = ((val_t)UINT32_MAX) << 32;
 const val_t   LOWMASK       = UINT32_MAX;
 const uint8_t DVAL_SHIFT    = 32;
 const val_t   SHIFTED_1     = LOWMASK + 1;
 const val_t   SHIFTED_2     = LOWMASK + 2;
-const val_t   SHIFTED_WEOF  = ((int64_t)WEOF) << 32;
-const val_t   SHIFTED_NAN   = (0x7FC00000ul << 32);
-const val_t   SHIFTED_MNAN  = (0xFFC00000ul << 32);
-const val_t   SHIFTED_INF   = (0x7F800000ul << 32);
-const val_t   SHIFTED_MINF  = (0xFFC00000ul << 32);
 const val_t   LTAG_MASK     = 0x07ul;
 const val_t   PTR_MASK      = ~LTAG_MASK;
+const val_t   DTYPE_MASK    = 0xfffffff8ul;
+const val_t   SHIFTED_WEOF  = ((int64_t)WEOF) << 32;
+const val_t   SHIFTED_NAN   = (0x7fc00000ul << 32);
+const val_t   SHIFTED_MNAN  = (0xffc00000ul << 32);
+const val_t   SHIFTED_INF   = (0x7f800000ul << 32);
+const val_t   SHIFTED_MINF  = (0xffc00000ul << 32);
 
-// global array of type objects, indexable using type key
+// global array of type object pointers, indexable using type key
 extern type_t** GLOBAL_TYPES;
-extern uint32_t TP_COUNTER;
+// these counters ensure that types 
+uint32_t OTYPE_COUNTER = 0x1au;
+uint32_t DTYPE_COUNTER = 0x40u;
 
 const val_t R_GLOBAL_VALUES[16] =  {
   0,
-  NONE,
-  OBJ,
-  SHIFTED_1 | LT_BOOL,
-  LT_BOOL,
-  LT_INT,
-  SHIFTED_1      | LT_INT,
-  SHIFTED_2      | LT_INT,
-  SHIFTED_WEOF   | LT_CHAR,
-  SHIFTED_NAN    | LT_FLOAT,
-  SHIFTED_MNAN   | LT_FLOAT,
-  SHIFTED_INF    | LT_FLOAT,
-  SHIFTED_MINF   | LT_FLOAT,
+  SYMBOL,
+  OBJECT,
+  SHIFTED_1      | BOOL | DIRECT,
+  BOOL           | DIRECT,
+  INTEGER        | DIRECT,
+  SHIFTED_1      | INTEGER | DIRECT,
+  SHIFTED_2      | INTEGER | DIRECT,
+  SHIFTED_WEOF   | CHAR    | DIRECT,
 };
 
 // other constants (initialized at startup)
@@ -54,12 +46,10 @@ extern val_t R_GLOBAL_CONSTANTS[16];
 #define R_FPTR      R_GLOBAL_VALUES[2]
 #define R_TRUE      R_GLOBAL_VALUES[3]
 #define R_FALSE     R_GLOBAL_VALUES[4]
-#define R_ZERO      R_GLOBAL_VALUES[7]
-#define R_ONE       R_GLOBAL_VALUES[8]
-#define R_TWO       R_GLOBAL_VALUES[9]
-#define R_EOF       R_GLOBAL_VALUES[10]
-#define R_NAN       R_GLOBAL_VALUES[11]
-#define R_INF       R_GLOBAL_VALUES[12]
+#define R_ZERO      R_GLOBAL_VALUES[5]
+#define R_ONE       R_GLOBAL_VALUES[6]
+#define R_TWO       R_GLOBAL_VALUES[7]
+#define R_EOF       R_GLOBAL_VALUES[10] 
 #define R_STDIN     R_GLOBAL_CONSTANTS[0]
 #define R_STDOUT    R_GLOBAL_CONSTANTS[1]
 #define R_STDERR    R_GLOBAL_CONSTANTS[2]
@@ -78,20 +68,13 @@ extern val_t R_GLOBAL_CONSTANTS[16];
 // the strings used to create forms, special variables, and special symbols
 const chr_t* SPECIAL_FORMS[] = { "setv", "def", "quote", "if", "fun", "macro", "do", "let" };
 
-const chr_t* SPECIAL_CONSTANTS[] = { "nil", "none", "t", "f", "ok", "unbound", "nan", "inf" };
-
-const chr_t* BUILTIN_TYPE_NAMES[16] = 
-{
-  "nil", "bool", "char", "int", "float"
-  "atom", "sym", "str", "bstr", "tuple",
-  "btuple", "dict", "pair", "list", "iostrm",
-  "type",
-};
+const chr_t* SPECIAL_CONSTANTS[] = { "nil", "none", "t", "f", "ok", "unbound", };
+extern const chr_t* BUILTIN_TYPE_NAMES[16];
 
 // main memory
-extern unsigned char *RAM, *FREE, *EXTRA;
+extern uchr_t *RAM, *FREE, *EXTRA;
 extern val_t HEAPSIZE, STACKSIZE, HEAPCRITICAL;
-const float RAM_LOAD_FACTOR = 0.8;
+const  float RAM_LOAD_FACTOR = 0.8;
 extern bool GROWHEAP, GREWHEAP;
 
 // stack and registers
@@ -112,24 +95,23 @@ extern val_t REGISTERS[16];
 
 // flags for bitmapping the main registers
 typedef enum {
-  RX_VALUE    =0x0001,
-  RX_ENVT     =0x0002,
-  RX_CONT     =0x0004,
-  RX_FUNC     =0x0008,
-  RX_BP       =0x0010,
-  RX_SP       =0x0020,
-  RX_PC       =0x0040,
-  RX_OP       =0x0080,
-  RX_ARG_0    =0x0100,
-  RX_ARG_1    =0x0200,
-  RX_ARG_2    =0x0400,
-  RX_ARG_3    =0x0800,
-  WRX_0       =0x1000,
-  WRX_1       =0x2000,
-  WRX_2       =0x4000,
-  WRX_3       =0x8000,
+  RX_VALUE    =0x0001u,
+  RX_ENVT     =0x0002u,
+  RX_CONT     =0x0004u,
+  RX_FUNC     =0x0008u,
+  RX_BP       =0x0010u,
+  RX_SP       =0x0020u,
+  RX_PC       =0x0040u,
+  RX_OP       =0x0080u,
+  RX_ARG_0    =0x0100u,
+  RX_ARG_1    =0x0200u,
+  RX_ARG_2    =0x0400u,
+  RX_ARG_3    =0x0800u,
+  WRX_0       =0x1000u,
+  WRX_1       =0x2000u,
+  WRX_2       =0x4000u,
+  WRX_3       =0x8000u,
 } rx_map_t;
-
 
 /* reader state */
 extern chr_t TOKBUFF[];
@@ -138,8 +120,6 @@ extern int32_t LASTCHR;
 extern int32_t TOKTYPE;
 
 /* error handling */
-extern rsp_ectx_t* exc_stack;
-
 // error codes (can be used to index the error names array)
 typedef enum
 {

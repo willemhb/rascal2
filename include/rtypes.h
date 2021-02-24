@@ -8,159 +8,63 @@
 
 // typedefs for rascal types
 typedef uintptr_t val_t;       // a tagged rascal value
-typedef uint32_t tpkey_t;
+typedef uint32_t  tpkey_t;
 
-/* non-object types */
+/* core direct types */
 typedef bool     rbool_t;
 typedef int32_t  rint_t;
-typedef ichr32_t rchr_t;
+typedef cint32_t rchr_t;
 typedef flt32_t  rflt_t;
-typedef FILE     iostrm_t;
+
+/* C types with a direct rascal representation */
+typedef FILE     riostrm_t;
 
 /* core object types */
-typedef struct obj_t  obj_t;
-typedef struct vobj_t vobj_t;
-typedef struct pair_t pair_t;
-typedef struct list_t list_t;
-typedef struct atom_t atom_t;
-typedef struct ftuple_t ftuple_t;
-typedef struct tuple_t tuple_t;
-typedef struct btuple_t btuple_t;
-typedef struct table_t table_t;
-typedef table_t set_t;
-typedef table_t dict_t;
+typedef struct pair_t    pair_t;
+typedef struct symbol_t  symbol_t;
+typedef struct obj_t     obj_t;
+typedef struct vobj_t    vobj_t;
+typedef struct cval_t    cval_t;
+typedef struct vcval_t   vcval_t;
 
-// VM types
-typedef struct builtin_t builtin_t;
-typedef struct method_t method_t;
-typedef ftuple_t code_t;
-typedef ftuple_t envt_t;
-typedef ftuple_t closure_t;
-typedef dict_t nmspc_t;
-typedef dict_t module_t;
+/* builtin object types */
+typedef struct rstr_t     rstr_t;
+typedef struct bytes_t    bytes_t;
+typedef struct svec_t     svec_t;
+typedef struct bvec_t     bvec_t;
+typedef struct function_t function_t;
+typedef struct builtin_t  builtin_t;
 
 /* metaobjects */
 typedef struct type_t type_t;
 
-/* C data representations */
-typedef struct str_t   str_t;
-typedef struct bstr_t  bstr_t;
-
 // valid function signatures for functions callable from within rascal
-typedef val_t (*r_cfun_t)(size_t,val_t*);
-typedef val_t (*r_zfun_t)();
-typedef val_t (*r_ufun_t)(val_t);
-typedef val_t (*r_bfun_t)(val_t,val_t);
-typedef val_t (*r_mfun_t)(val_t,envt_t*,list_t*);
+typedef val_t (*rbuiltin_t)(val_t*,size_t);
 
-// signatures for functions used by the C API
-typedef void*   (*r_callc_t)(type_t*,size_t,void*);
-typedef int32_t (*r_cinit_t)(type_t*,val_t,void*);
-
-// this struct holds vm state for handling exceptions
-typedef struct _rsp_ectx_t rsp_ectx_t;
-
-typedef enum
+// builtin typecodes - direct types must be multiples of 8
+enum
   {
-    LTAG_LIST    = 0x00u,
-    OBJ          = 0x01u,
-    DIRECT       = 0x02u,
-    OBJHEAD      = 0x03u,
-    LTAG_IOSTRM  = 0x04u,
-    LT_BOOL      = 0x02<<3 | DIRECT,
-    LT_CHAR      = 0x05<<3 | DIRECT,
-    LT_INT       = 0x06<<3 | DIRECT,
-    LT_FLOAT     = 0x07<<3 | DIRECT,
-    NONE         = 0xff,
-  } ltag_t;
+    LIST     = 0x00u,
+    PAIR     = 0x01u,
+    SYMBOL   = 0x02u,
+    IOSTRM   = 0x03u,
+    OBJECT   = 0x04u,
+    CVALUE   = 0x05u,
+    FUNCTION = 0x06u,
+    DIRECT   = 0x07u,
+    NIL      = 0x08u,
+    STRING   = 0x09u,
+    BYTES    = 0x0au,
+    RSVECTOR = 0x0bu,
+    RBVECTOR = 0x0cu,
+    TABLE    = 0x0du,
+    SYMTAB   = 0x0eu,
+    DATATYPE = 0x0fu,
+    CHAR     = 0x10u,
+    BOOL     = 0x18u,
+    INTEGER  = 0x20u,
+  };
 
-typedef enum
-  {
-    LIST           = LTAG_LIST,
-    PAIR           = OBJ,
-    BOOL           = DIRECT,
-    NIL            = OBJHEAD,
-    IOSTRM         = LTAG_IOSTRM,
-    CHAR           = 0x05u,
-    // numeric types
-    INT            = 0x06u,
-    FLOAT          = 0x07u,
-    UINT           = 0x08u,
-    IMAG           = 0x09u,
-    CMPLX          = 0x0au,
-    BIGINT         = 0x0bu,
-    BIGFLT         = 0x0cu,
-    BIGIMAG        = 0x0du,
-    BIGCMPLX       = 0x0eu,
-    BIGRAT         = 0x0fu,
-    // end numeric types
-    OBJECT         = 0x10u,
-    FTUPLE         = 0x11u,
-    SLEAF          = 0x12u,
-    DLEAF          = 0x13u,
-    ILEAF          = 0x14u,
-    NTUPLE         = 0x15u,
-    BTUPLE         = 0x16u,
-    SNODE          = 0x17u,
-    DNODE          = 0x18u,
-    INODE          = 0x19u,
-    STR            = 0x1au,
-    BSTR           = 0x1bu,
-
-    /* mapping types */
-    TABLE          = 0x1cu,
-    SET            = 0x1du,
-    DICT           = 0x1eu,
-    SYMTB          = 0x1fu,
-    READTB         = 0x20u,
-    NMSPC          = 0x21u,
-
-    /* vm types */
-    MODULE         = 0x22u,
-    METHTAB        = 0x23u,
-    CODE           = 0x24u,
-    CLOSURE        = 0x25u,
-    ENVT           = 0x26u,
-    BLTNFUNC       = 0x27u,
-    CPOINTER       = 0x28u,
-    
-    /* low-level types */
-    CARRAY         = 0x29u,
-    CVECTOR        = 0x2au,
-    ATOM           = 0x2bu,
-
-    /* metaobjects and base classes */
-
-    TYPE           = 0x2cu,
-    GENERIC        = 0x2du,
-    PROTOCOL       = 0x2eu,
-  } bltn_tpkey_t;
-
-/* 
-    canonical object heads
- */
-
-#define RSP_OBJECT_HEAD      \
-  uint32_t obj_tpkey;        \
-  uint16_t obj_hflags;       \
-  uint8_t  obj_lflags;       \
-  uint8_t  obj_vflags;       \
-
-// not currently implemented
-#define RSP_VOBJECT_HEAD     \
-  uint32_t obj_tpkey;        \
-  uint16_t obj_hflags;       \
-  uint8_t  obj_lflags;       \
-  uint8_t  obj_vflags;	     \
-  uptr_t   obj_size
-
-
-typedef enum
-  {
-    SZKEY_NONE   = 0x0u,
-    SZKEY_LENGTH = 0x1u,
-    SZKEY_BITMAP = 0x2u,
-  } szkey_t;
 
 /* the common numeric type can be found by bitwise OR-ing the codes */
 
@@ -201,28 +105,17 @@ typedef enum {
   PTR_TAGGED = 0x80u,
   PTR_RPTR   = PTR_TAGGED | PTR_VOID,
   PTR_RDATA  = PTR_TAGGED | PTR_NONE,
+  PTR_RVALUE = 0xffu,                  // the pointer can't be characterized in general
 } c_ptr_t;
 
-struct obj_t
-{
-  RSP_OBJECT_HEAD;
-  uchr_t obj_data[8];
-};
+#define OBJECT_HEAD   \
+  uint32_t type;      \
+  uint32_t cmeta
 
-struct vobj_t
-{
-  RSP_VOBJECT_HEAD;
-  uchr_t vobj_data[16];
-};
-
-#define vflags(o)  (o)->obj_vflags
-#define otpkey(o)  (o)->obj_tpkey
-#define hflags(o)  (o)->obj_hflags
-#define lflags(o)  (o)->obj_lflags
-#define osize(o)   (o)->obj_size
-
-/* structs to represent builtin object types */
-// untagged objects
+# define VOBJECT_HEAD \
+  uint32_t type;      \
+  uint32_t cmeta;     \
+  val_t    size
 
 struct pair_t
 {
@@ -230,125 +123,37 @@ struct pair_t
   val_t cdr;
 };
 
-struct list_t
+struct symbol_t
 {
-  val_t   car;
-  list_t* cdr;
+  uint32_t flags;
+  hash_t hash;
+  chr_t name[8];
 };
 
-#define pcar(p) (p)->car
-#define pcdr(p) (p)->cdr
-
-// the generic tuple and ftuple are the building blocks for various extension types
-struct ftuple_t
+struct obj_t
 {
-  RSP_OBJECT_HEAD;
-  val_t elements[1];
+  OBJECT_HEAD;
+  val_t    data[1];
 };
 
-struct tuple_t
+struct vobj_t
 {
-  RSP_VOBJECT_HEAD;
-  val_t elements[2];
+  VOBJECT_HEAD;
+  val_t data[2];
 };
 
-struct btuple_t
+struct cval_t
 {
-  RSP_OBJECT_HEAD;
-  uint32_t bt_size;
-  uint32_t bt_map;
-  val_t    elements[2];
+  OBJECT_HEAD;
+  uchr_t c_data[8];
 };
 
-#define bt_allcsz(b)   (b)->bt_size
-#define bt_btmp(b)     (b)->bt_map
-
-struct table_t
+struct vcval_t
 {
-  RSP_OBJECT_HEAD;
-  val_t nkeys;
-  val_t lvl_one[4];     // values are first sorted into one of these buckets based on
-};                      // their most significant bits
-
-#define tb_mapping(d)   &((d)->lvl_one[0])
-#define tb_nkeys(d)     (d)->nkeys
-#define tb_free(d)      (d)->free
-
-const uint8_t MAX_TB_ND_LEVELS = 6;
-
-struct atom_t
-{
-  RSP_OBJECT_HEAD;
-  hash32_t hash;
-  chr_t atm_name[4];
+  VOBJECT_HEAD;
+  uchr_t c_data[16];
 };
 
-#define atom_hash(a)  (a)->hash
-#define atom_flags(a) (a)->obj_lflags
-#define atom_name(a)  &((a)->atm_name[0])
-
-typedef enum
-  {
-    RESERVED = 0x008u,
-    KEYWORD  = 0x004u,
-    INTERNED = 0x002u,
-    GENSYM   = 0x001u,
-  } smflags_t;
-
-struct str_t
-{
-  RSP_OBJECT_HEAD;
-  chr_t str_chrs[8];
-};
-
-struct bstr_t
-{
-  RSP_VOBJECT_HEAD;
-  uchr_t bytes[8];
-};
-
-#define str_chars(s)   &((s)->str_chrs[0])
-#define bstr_nbytes(b) (b)->size
-#define bstr_bytes(b)  &((b)->bytes[0])
-
-
-/* core metaobject */
-struct type_t {
-  RSP_OBJECT_HEAD;
-  tpkey_t   tp_tp_key;     // the appropriate type key for objects of this type
-  hash32_t  tp_hash;       // the hash for this type
-  /* general predicates */
-
-  bool       tp_direct_p;
-  bool       tp_heap_p;
-  bool       tp_atomic_p;
-  bool       tp_store_p;
-  bool       tp_final_p;
-  bool       tp_varsz_p;
-  bool       tp_cdata_p;   // indicates whether the type holds an C data
-
-  /* size and layout information */
-  uint8_t     tp_vtag;
-  uint8_t     tp_otag;
-  uint8_t     tp_c_num;
-  uint8_t     tp_c_ptr;
-  uint8_t     tp_elsz;                   // for variably sized types
-  size_t      tp_base_size;              // the base size in bytes
-  size_t      tp_nfields;
-  r_cfun_t*   tp_rsp_new;                // the rascal callable constructor
-
-  /* C api */
-  void        (*tp_prn)(val_t,iostrm_t*);
-  int32_t     (*tp_ord)(val_t,val_t);
-  hash32_t    (*tp_hash_val)(val_t);
-  size_t      (*tp_size)(obj_t*);
-  size_t      (*tp_elcnt)(obj_t*);
-  val_t*      (*tp_get_data)(obj_t*);
-  val_t       (*tp_copy)(type_t*,val_t,uchr_t**);
-
-  /* Just the dang type name! */
-  chr_t name[1];
-};
 
 /* union types for handling different representations of rascal values */
 typedef union
@@ -362,14 +167,70 @@ typedef union
 
 typedef union
 {
-  val_t value;
-  struct
-  {
-    rsp_c32_t bits;
-    uint32_t pad : 24;
-    uint32_t tag :  8;
-  } padded;
+  val_t    value;
+  void*    ptr;
+  uchr_t*  mem;
+  uint64_t bits64;
+  rint_t   integer;
+  rflt_t   float32;
+  rchr_t   unicode;
+  rbool_t  boolean;
+  uint32_t bits32;
 } rsp_c64_t;
+
+typedef enum
+  {
+    FIXED           = 0x00u,
+    IMPLICIT        = 0x01u, // ie null-terminated byte string
+    VARIABLE        = 0x02u,
+    BITMAPPED       = 0x04u,
+    WIDE            = 0x08u,
+    SMALL_LEN       = VARIABLE,
+    SMALL_BITMAPPED = BITMAPPED | VARIABLE,
+    WIDE_LEN        = WIDE | VARIABLE,
+    WIDE_BITMAPPED  = WIDE | BITMAPPED | VARIABLE,
+  } sizing_t;
+
+typedef struct
+{
+  c_num_t el_cnum;
+  c_ptr_t el_cptr;
+  uint16_t el_sz;
+} cvspec_t;
+
+typedef struct
+{
+  void        (*prn)(val_t,riostrm_t*);
+  val_t       (*call)(type_t*,val_t*,size_t);
+  size_t      (*size)(type_t*,val_t);
+  size_t      (*elcnt)(val_t);
+  hash_t      (*hash)(val_t,uint32_t);
+  int32_t     (*ord)(val_t,val_t);
+  val_t       (*new)(type_t*,val_t,size_t);
+  val_t       (*builtin_new)(val_t,size_t);
+  void*       (*init)(type_t*,val_t,size_t,void*);
+  val_t       (*relocate)(type_t*,val_t,uchr_t**);
+  uint8_t     (*isalloc)(type_t*,val_t);
+} capi_t;
+
+struct type_t {
+  OBJECT_HEAD;
+  /* type flags and field data */
+  tpkey_t tp_tpkey;
+  tpkey_t tp_ltag;
+  /* general sizing data */
+  bool     tp_isalloc;
+  sizing_t tp_sizing;
+  size_t   tp_init_sz;   // the size of the object's meta-information (in bytes)
+  size_t   tp_base_sz;   // the size of the object's fixed-size portion
+  size_t   tp_nfields;   // the number of fixed fields on the object
+  /* element sizing data */
+  cvspec_t* tp_cvtable;
+  /* C api */
+  capi_t* tp_capi;
+  /* Just the dang type name! */
+  chr_t name[];
+};
 
 /* end rtypes.h */
 #endif

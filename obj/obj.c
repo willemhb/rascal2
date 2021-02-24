@@ -1,301 +1,99 @@
-#include "../include/rsp_core.h"
+#include "../include/obj.h"
 
-/* object constructors */
-list_t* mk_list(size_t argc, val_t* args)
+val_t fobj_new(type_t* to, val_t args, size_t argc)
+{  
+  argcount(to->tp_nfields, argc);
+  void* dest = vm_allocw(to->tp_base_sz,to->tp_nfields);
+  val_t* stk = (val_t*)args;
+  val_t* data = (val_t*)fval_init_head(to,dest);
+
+  for (size_t i = 0; i < to->tp_nfields; i++)
+    data[i] = stk[i];
+
+  if (to->tp_init)
+    to->tp_init(to,args,argc,dest);
+
+  return tag(dest,to);
+}
+
+
+val_t vobj_new(type_t* to, val_t args, size_t argc)
 {
-  if (argc == 0)
-    return NULL;
+  vargcount(to->tp_nfields,argc);
+  size_t var_data = argc - to->tp_nfields;
+  void* dest = vm_allocw(to->tp_base_sz,var_data);
+  val_t* stk = (val_t*)args;
+  val_t* data = (val_t*)vval_init_head(to,argc,dest);
 
-  else
-    {
-      pair_t* out = vm_allocc(argc);
-      pair_t* curr = out;
-      size_t i = 1;
-      for (; i < argc - 1; i++, curr++)
-    {
-      pcar(curr) = args[i];
-      pcdr(curr) = (val_t)(curr + 1);
-    }
+  for (size_t i = 0; i < argc; i++)
+    data[i] = stk[i];
 
-  pcar(curr) = args[i];
-  pcdr(curr) = 0;
+  if (to->tp_init)
+    to->tp_init(to,args,argc,dest);
 
-  return (list_t*)out;
-  }
+  return tag(dest,to);
 }
 
-pair_t* mk_pair(val_t ca, val_t cd)
+inline val_t vobj_sizeof(type_t* to, val_t x)
 {
-  pair_t* hd = vm_allocc(1);
-
-  car_(hd) = ca;
-  cdr_(hd) = cd;
-
-return (pair_t*)hd;
+  return (ptr(vobj_t*,x)->size * 8) + to->tp_base_sz;
 }
 
-ftuple_t* mk_ftuple(size_t n, uint8_t fl, tpkey_t t)
+inline val_t sobj_sizeof(type_t* to, val_t x)
 {
-  n = max(n,1ul);
-  ftuple_t* new = vm_allocw(8,n);
-  otpkey(new) = t;
-  lflags(new) = fl;
-  // initialize all elements to NIL
-  memset((uchr_t*)tuple_data(new),0,n*8);
-
-  return new;
+  return (ptr(obj_t*,x)->cmeta * 8) + to->tp_base_sz;
 }
 
-tuple_t* mk_tuple(size_t n, uint8_t fl, tpkey_t t)
+inline val_t* obj_data(type_t* to, val_t x)
 {
-  n = max(n,2ul);
-  tuple_t* new = vm_allocw(16,n);
-  osize(new) = n;
-  otpkey(new) = t;
-  lflags(new) = fl;
-  // initialize all elements to NIL
-  memset((uchr_t*)tuple_data(new),0,n*8);
-
-  return new;
+  return (val_t*)(ptr(void*,x) + to->tp_data_offset);
 }
 
-btuple_t* mk_btuple(uint32_t n, uint8_t fl, tpkey_t t)
+inline val_t* obj_elements(type_t* to, val_t x)
 {
-  n = min(32u,cpow2_32(n));
-  btuple_t* out = vm_allocw(16,n);
-  bt_allcsz(out) = n;
-  bt_btmp(out) = 0;
-  memset((uchr_t*)tuple_data(out),0,n*8);
-  otpkey(out) = t;
-  lflags(out) = fl;
-
-  return out;
+    return (val_t*)(ptr(void*,x) + to->tp_base_sz);
 }
 
-btuple_t* mk_gl_btuple(uint32_t n, uint8_t fl, tpkey_t t)
+inline val_t fobj_relocate(type_t* to, val_t x, uchr_t** dest)
 {
-  n = min(32u,cpow2_32(n));
-  btuple_t* out = vm_cmalloc(16 + n * 8);
-  bt_allcsz(out) = n;
-  bt_btmp(out) = 0;
-  memset((uchr_t*)tuple_data(out),0,n*8);
-  otpkey(out) = t;
-  lflags(out) = fl;
+  size_t osz = val_sizeof(x,to);
+  size_t asz = calc_mem_size(osz);
+  uchr_t* out = *dest;
+  memcpy(ptr(uchr_t*,x),dest,osz);
+  *out += asz;
 
-  return out;
+  val_t* frm_d = obj_data(to,x);
+  val_t* to_d  = (val_t*)(out + to->tp_data_offset);
+
+  for (size_t i = 0; i < to->tp_nfields; i++)
+      to_d[i] = gc_trace(frm_d[i]);
+
+  val_t rtn = tag(out,to);
+  car_(x) = R_FPTR;
+  cdr_(x) = rtn;
+
+  return rtn;
 }
 
-/* tuple sizing */
-inline size_t _tuple_size(obj_t* t)
+
+inline val_t vobj_relocate(type_t* to, val_t x, uchr_t** dest)
 {
-  tpkey_t tk = otpkey(t);
+  size_t len = to->tp_elcnt(x);
+  size_t osz = val_sizeof(x,to);
+  size_t asz = calc_mem_size(osz);
+  uchr_t* out = *dest;
+  memcpy(ptr(uchr_t*,x),dest,osz);
+  *out += asz;
 
-  switch (tk)
-    {
-    case FTUPLE: default:
-      return 8 * get_type(tk)->tp_nfields;
+  val_t* frm_d = obj_data(to,x);
+  val_t* to_d  = (val_t*)(out + to->tp_data_offset);
 
-    case NTUPLE:
-      return 8 * ((vobj_t*)t)->obj_size;
+  for (size_t i = 0; i < to->tp_nfields + len; i++)
+      to_d[i] = gc_trace(frm_d[i]);
 
-    case DLEAF:
-      return 16 * ((btuple_t*)t)->bt_size;
+  val_t rtn = tag(out,to);
+  car_(x) = R_FPTR;
+  cdr_(x) = rtn;
 
-    case SLEAF: case ILEAF:
-    case BTUPLE ... INODE:
-      return 8 * ((btuple_t*)t)->bt_size;
-    }
+  return rtn;
 }
-
-size_t _tuple_elcnt(obj_t* t)
-{
-  tpkey_t tk = otpkey(t);
-  switch (tk)
-    {
-      case FTUPLE: default:
-      return get_type(tk)->tp_nfields;
-
-    case NTUPLE:
-      return ((vobj_t*)t)->obj_size;
-
-    case SLEAF ... ILEAF:
-      return ((btuple_t*)t)->bt_size;
-
-    case BTUPLE ... INODE:
-      return __builtin_popcount(((btuple_t*)t)->bt_map);
-    }
-}
-
-/* tuple accessors */
-inline val_t* _tuple_data(obj_t* t)
-{
-  return (val_t*)(&(t->obj_data[0]));
-}
-
-
-/* gc functions */
-val_t copy_pair(type_t* to, val_t v, uchr_t** tos)
-{
-  uchr_t* frm = ptr(uchr_t*,v);
-
-  memcpy(*tos,frm,16);
-
-  pair_t* new = (pair_t*)tos;
-  *tos += 16;
-
-  pcar(new) = gc_trace(pcar(new));
-  pcdr(new) = gc_trace(pcdr(new));
-
-  return vm_tag(to,(val_t)new);
-}
-
-val_t copy_tuple(type_t* to, val_t v, uchr_t** tos)
-{
-  uchr_t* frm = ptr(uchr_t*,v); tuple_t* tu_old = ptr(tuple_t*,v);
-  tuple_t* tu_new = (tuple_t*)(*tos);
-  size_t elcnt = tuple_elcnt(tu_old);
-  size_t tsz = to->tp_base_size + (elcnt * 8);
-
-  memcpy(*tos,frm,tsz);
-
-  tsz = calc_mem_size(tsz);
-  *tos += tsz;
-
-  val_t* tuo_elm = tuple_data(tu_old);
-  val_t* tun_elm = tuple_data(tu_new);
-
-  for (size_t i = 0; i < elcnt;i++)
-    tun_elm[i] = gc_trace(tuo_elm[i]);
-
-  return vm_tag(to,(val_t)tu_new);
-}
-
-/* hashing functions */
-hash32_t hash_pair(val_t v)
-{
-  val_t ca = ptr(pair_t*,v)->car, cd = ptr(pair_t*,v)->cdr;
-  hash32_t chash = rsp_hash(ca);
-  hash32_t dhash = rsp_hash(cd);
-  hash32_t final = rehash(chash,dhash);
-  return final;
-}
-
-hash32_t hash_tuple(val_t v)
-{
-  tuple_t* tx = ptr(tuple_t*,v);
-  size_t telcnt = tuple_elcnt((obj_t*)tx);
-  hash32_t acch = 0, ch;
-  val_t* tel = tuple_data(tx);
-
-  for (size_t i = 0; i < telcnt; i++)
-    {
-      ch = rsp_hash(tel[i]);
-      acch = rehash(ch,acch);
-    }
-
-  return acch;
-}
-
-/* ordering functions */
-int32_t ord_pair(val_t px, val_t py)
-{
-  pair_t* ppx = ptr(pair_t*,px), *ppy = ptr(pair_t*,py);
-  
-  if (!ppx)
-    return ppy ? -1 : 0;
-
-  else if (!ppy)
-    return 1;
-
-  else
-    return rsp_ord(pcar(ppx),pcar(ppy)) ? : rsp_ord(pcdr(ppx),pcdr(ppy));
-}
-
-int32_t ord_tuple(val_t tx, val_t ty)
-{
-  tuple_t* ttx = ptr(tuple_t*,tx), *tty = ptr(tuple_t*,ty);
-  val_t* xels = tuple_data(ttx), *yels = tuple_data(tty);
-  size_t xlen = tuple_elcnt(tx), ylen = tuple_elcnt(ty);
-  size_t maxcompares = min(xlen,ylen);
-
-  for (size_t i = 0; i < maxcompares;i++)
-    {
-      int32_t result = rsp_ord(xels[i],yels[i]);
-
-      if (result)
-	return result;
-    }
-
-  if (xlen < ylen)
-    return -1;
-
-  else if (ylen < xlen)
-    return 1;
-
-  else
-    return 0;
-}
-
-list_t* list_append(list_t** ls, val_t v)
-{
-    pair_t* new = mk_pair(v,R_NIL);
-
-    while (*ls)
-      ls = &pcdr(*ls);
-
-    
-    *ls = (list_t*)new;
-
-    return *ls;
-}
-
-/* printing */
-
-void prn_list(val_t ls, iostrm_t* f) {
-  fputwc('(',f);
-  list_t* lsx = ecall(tolist,ls);
-
-  while (lsx)
-    {
-      vm_print(pcar(lsx),f);
-
-      if (pcdr(lsx))
-	fputwc(' ',f);
-
-      lsx = pcdr(lsx);
-    }
-
-  fputwc(')',f);
-  return;
-}
-
-void prn_pair(val_t c, iostrm_t* f)
-{
-  pair_t* co = ecall(topair,c);
-  fputwc('(',f);
-  vm_print(pcar(co),f);
-  fputs(" . ",f);
-  vm_print(pcdr(co),f);
-  fputwc(')',f);
-  return;
-}
-
-void prn_tuple(val_t v, iostrm_t* f)
-{
-  tuple_t* tu = ecall(totuple,v);
-  fputs("#(",f);
-  val_t* el = tuple_data((obj_t*)tu);
-  size_t elcnt = tuple_elcnt(v);
-
-  for (size_t i = 0; i < elcnt; i++)
-    {
-      vm_print(el[i],f);
-      
-      if (elcnt - i > 1)
-	fputwc(' ', f);
-    }
-
-  fputwc(')',f);
-  return;
-}
-
