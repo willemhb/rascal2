@@ -21,6 +21,7 @@ typedef FILE     riostrm_t;
 
 /* core object types */
 typedef struct pair_t    pair_t;
+typedef struct list_t    list_t;
 typedef struct symbol_t  symbol_t;
 typedef struct obj_t     obj_t;
 typedef struct vobj_t    vobj_t;
@@ -30,7 +31,7 @@ typedef struct vcval_t   vcval_t;
 /* builtin object types */
 typedef struct rstr_t     rstr_t;
 typedef struct bytes_t    bytes_t;
-typedef struct svec_t     svec_t;
+typedef struct fvec_t     fvec_t;
 typedef struct bvec_t     bvec_t;
 typedef struct function_t function_t;
 typedef struct builtin_t  builtin_t;
@@ -55,8 +56,8 @@ enum
     NIL      = 0x08u,
     STRING   = 0x09u,
     BYTES    = 0x0au,
-    RSVECTOR = 0x0bu,
-    RBVECTOR = 0x0cu,
+    FVECTOR  = 0x0bu,
+    BVECTOR  = 0x0cu,
     TABLE    = 0x0du,
     SYMTAB   = 0x0eu,
     DATATYPE = 0x0fu,
@@ -121,6 +122,12 @@ struct pair_t
 {
   val_t car;
   val_t cdr;
+};
+
+struct list_t
+{
+  val_t   car;
+  list_t* cdr;
 };
 
 struct symbol_t
