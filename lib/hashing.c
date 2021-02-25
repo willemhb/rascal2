@@ -5,15 +5,15 @@
 
 // numeric utilities
 uint32_t cpow2_32(int32_t i) {
-  if (i < 0) return 1;
+  if (i <= 0) return 1;
 
   uint32_t v = (uint32_t)i;
 
   v--;
-  v |= v >> 1;
-  v |= v >> 2;
-  v |= v >> 4;
-  v |= v >> 8;
+  v |= v >>  1;
+  v |= v >>  2;
+  v |= v >>  4;
+  v |= v >>  8;
   v |= v >> 16;
   v++;
   

@@ -32,9 +32,9 @@ obj_t*     objhead(val_t);
 val_t     tag_from_type(rsp_c64_t,type_t*);
 val_t     tag_from_tpkey(rsp_c64_t, tpkey_t);
 
-#define tag(v,k)                                          \
-  _Generic((k), type_t*:tag_from_type,                    \
-	        tpkey_t:tag_from_tpkey)((rsp_c64_t)(v),k)
+#define tag(v,k)                                                  \
+  _Generic((k), type_t*:tag_from_type,                            \
+	        int32_t:tag_from_tpkey)((rsp_c64_t)(v).bits64,k)
 
 type_t*  val_type(val_t);
 type_t*  tk_type(tpkey_t);
@@ -49,7 +49,9 @@ size_t   val_sizeof(val_t,type_t*);
 size_t   val_nwords(val_t,type_t*);
 hash_t   val_hash(val_t);
 hash_t   val_rehash(val_t,uint32_t);
+int32_t  val_eql(val_t,val_t);
 void     val_prn(val_t,riostrm_t*);
+int32_t  val_finalize(type_t*,val_t);
 
 // global value predicates
 bool isnil(val_t);
@@ -61,12 +63,12 @@ bool isreof(val_t);
 
 // tag predicates
 bool ispair(val_t);
+bool islist(val_t);
 bool isiostrm(val_t);
 bool issymbol(val_t);
+bool isfunction(val_t);
 bool isobj(val_t);
-bool isvobj(val_t);
 bool iscval(val_t);
-bool isvcval(val_t);
 bool isdirect(val_t);
 
 // other predicates

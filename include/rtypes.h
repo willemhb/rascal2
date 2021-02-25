@@ -33,14 +33,16 @@ typedef struct rstr_t     rstr_t;
 typedef struct bytes_t    bytes_t;
 typedef struct fvec_t     fvec_t;
 typedef struct bvec_t     bvec_t;
+typedef struct leaf_t     leaf_t;
 typedef struct function_t function_t;
 typedef struct builtin_t  builtin_t;
 
 /* metaobjects */
 typedef struct type_t type_t;
 
-// valid function signatures for functions callable from within rascal
-typedef val_t (*rbuiltin_t)(val_t*,size_t);
+// valid function signature typedefs
+typedef val_t   (*rbuiltin_t)(val_t*,size_t);
+typedef int32_t (*rcmp_t)(val_t,val_t);
 
 // builtin typecodes - direct types must be multiples of 8
 enum
@@ -56,16 +58,17 @@ enum
     NIL      = 0x08u,
     STRING   = 0x09u,
     BYTES    = 0x0au,
-    FVECTOR  = 0x0bu,
+    RVECTOR  = 0x0bu,
     BVECTOR  = 0x0cu,
-    TABLE    = 0x0du,
-    SYMTAB   = 0x0eu,
-    DATATYPE = 0x0fu,
+    TBDLEAF  = 0x0du,
+    TBSLEAF  = 0x0eu,
+    TABLE    = 0x0fu,
     CHAR     = 0x10u,
+    SYMTAB   = 0x11u,
+    DATATYPE = 0x12u,
     BOOL     = 0x18u,
     INTEGER  = 0x20u,
   };
-
 
 /* the common numeric type can be found by bitwise OR-ing the codes */
 
@@ -218,6 +221,7 @@ typedef struct
   void*       (*init)(type_t*,val_t,size_t,void*);
   val_t       (*relocate)(type_t*,val_t,uchr_t**);
   uint8_t     (*isalloc)(type_t*,val_t);
+  int32_t     (*finalize)(type_t*,val_t);
 } capi_t;
 
 struct type_t {

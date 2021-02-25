@@ -181,6 +181,34 @@ void val_prn(val_t v, riostrm_t* f)
 }
 
 
+bool val_eqv(val_t x, val_t y)
+{
+  tpkey_t tx = tpkey(x), ty = tpkey(y);
+  
+  if (tx == ty)
+    {
+      return GLOBAL_TYPES[tx]->tp_capi->ord(x,y) == 0;
+    }
+
+  return false;
+}
+
+int32_t val_finalize(type_t* to, val_t x)
+{
+  if (isdirect(x))
+    return 0;
+
+  else if (to->tp_capi->finalize)
+    if (to->tp_capi->finalize(to,x))
+      {
+	fprintf(stderr,"Exiting due to failure during finalization.");
+	exit(EXIT_FAILURE);
+      }
+
+  void* mem = ptr(void*, x);
+  vm_cfree(mem);
+  return 0;
+}
 
 void* val_init_head(type_t* to, size_t sz, void* dest)
 {
@@ -228,7 +256,6 @@ val_t datatype_call(type_t* to, val_t* args, size_t argc)
 
   return new;
 }
-
 
 capi_t DATATYPE_CAPI =
   {
