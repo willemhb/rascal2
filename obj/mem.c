@@ -8,6 +8,13 @@ inline void grow_stack()
   return;
 }
 
+inline void grow_dump()
+{
+  DUMP = vm_crealloc(DUMP,DUMPSIZE*2,false);
+  DUMPSIZE *= 2;
+  return;
+}
+
 inline val_t pop()
 {
   assert(SP, BOUNDS_ERR);
@@ -39,6 +46,76 @@ void popn(size_t n)
 {
   assert(SP - n > 0, BOUNDS_ERR);
   SP -= n;
+  return;
+}
+
+void save(uint32_t bmp)
+{
+  uint8_t nelem = __builtin_popcount(bmp);
+  uint32_t rx_idx = 0, shift;
+
+  if (DP + nelem >= DUMPSIZE)
+    grow_dump();
+
+  while (nelem--)
+    {
+      shift = __builtin_ctz(bmp);
+      rx_idx += shift;
+      bmp >>= shift + 1;
+      DUMP[DP++] = REGISTERS[rx_idx];
+    }
+
+  return;
+}
+
+void restore(uint32_t bmp)
+{
+  uint8_t nelem = __builtin_popcount(bmp);
+  uint32_t rx_idx = 0, shift;
+
+  assert(DP - nelem > 0, BOUNDS_ERR);
+
+  while (nelem--)
+    {
+      shift = __builtin_ctz(bmp);
+      rx_idx += shift;
+      bmp >>= shift + 1;
+      REGISTERS[rx_idx] = DUMP[DP-nelem];
+    }
+
+  DP -= nelem;
+  return;
+}
+
+void fsave(uint32_t bmp)
+{
+  uint8_t nelem = __builtin_popcount(bmp);
+  uint32_t rx_idx = 0, shift;
+
+  while (nelem--)
+    {
+      shift = __builtin_ctz(bmp);
+      rx_idx += shift;
+      bmp >>= shift + 1;
+      DUMP[DP-nelem] = REGISTERS[rx_idx];
+    }
+
+  return;
+}
+
+void frestore(uint32_t bmp)
+{
+  uint8_t nelem = __builtin_popcount(bmp);
+  uint32_t rx_idx = 0, shift;
+
+  while (nelem--)
+    {
+      shift = __builtin_ctz(bmp);
+      rx_idx += shift;
+      bmp >>= shift + 1;
+      REGISTERS[rx_idx] = DUMP[DP-nelem];
+    }
+
   return;
 }
 

@@ -44,33 +44,6 @@ inline int iswodigit(wint_t c) {
   }
 }
 
-/* error handling */
-
-inline const chr_t* rsp_efmt(rsp_err_t eno) { return ERROR_FMTS[eno]; }
-inline const chr_t* rsp_errname(rsp_err_t eno) { return ERROR_NAMES[eno]; }
-
-void rsp_vperror(const chr_t* fl, int32_t ln, const chr_t* fnc, rsp_err_t eno, ...)
-{
-  fprintf(stderr,ERRINFO_FMT,fl,ln,fnc,rsp_errname(eno));
-  const chr_t* fmt = rsp_efmt(eno);
-  va_list args;
-
-   va_start(args, eno);
-   vfprintf(stderr, fmt, args);
-   va_end(args);
-
-   fputc('\n',stderr);
-
-   return;
-}
-
-void rsp_raise(rsp_err_t errno) {
-  if (exc_stack == NULL)
-     longjmp(exc_stack->buf, errno);
-
-  fprintf(stderr, "Exiting due to unhandled %s error.\n", rsp_errname(errno));
-  exit(EXIT_FAILURE);
-}
 
 /* inlined bindings for C arithmetic, bitwise, and comparison functions */
 

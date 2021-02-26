@@ -2,12 +2,23 @@
 
 
 MK_TYPE_PREDICATE(BVECTOR,OBJECT,bvec)
+MK_TYPE_PREDICATE(TBSLEAF,OBJECT,sleaf)
+MK_TYPE_PREDICATE(TBDLEAF,OBJECT,dleaf)
 MK_SAFECAST_P(bvec_t*,bvec,addr)
+MK_SAFECAST_P(sleaf_t*,sleaf,addr)
+MK_SAFECAST_P(dleaf_t*,dleaf,addr)
+MK_SAFECAST_P(leaf_t*,leaf,addr)
 
 
-inline uint32_t popcnt(uint32_t b)
+inline bool isleaf(val_t x)
 {
-  return __builtin_popcount(b);
+  switch (tpkey(x))
+    {
+    case TBSLEAF: case TBDLEAF:
+      return true;
+    default:
+      return false;
+    }
 }
 
 
@@ -23,12 +34,7 @@ inline uint32_t get_mask(hamt_lvl_t lvl)
   return masks[lvl];
 }
 
-inline uint8_t get_bm_index(uint32_t bmp, uint8_t idx)
-{
-  return popcnt(bmp & ((1 << idx) - 1));
-}
-
-bvec_t*  mk_bvec(uint8_t lvl, size_t sz, uint16_t flags)
+bvec_t*  mk_hamt_nd(uint8_t lvl, size_t sz, uint16_t flags)
 {
   assert(sz <= 32, BOUNDS_ERR);
   bvec_t* out;
@@ -36,20 +42,18 @@ bvec_t*  mk_bvec(uint8_t lvl, size_t sz, uint16_t flags)
   switch (lvl)
     {
     case 1:
-      out = (flags & GLOBAL) ? vm_cmalloc((1 + 32)*8) : vm_allocw(8,32);
+      out = mk_bvec(32,flags & GLOBAL);
       break;
 
     case 2 ... 6:
-      out = (flags & GLOBAL) ? vm_cmalloc((1 + sz) * 8) : vm_allocw(8,sz);
+      out = mk_bvec(sz,flags & GLOBAL);
       break;
 
     case 7: default:
-      out = (flags & GLOBAL) ? vm_cmalloc(40) : vm_allocw(8,4);
+      out = mk_bvec(4, flags & GLOBAL);
       break;
     }
 
-  out->type       = BVECTOR;
-  out->bv_bmap    = 0;
   return out;
 }
 
@@ -76,7 +80,7 @@ leaf_t* mk_leaf(hash_t h, val_t key, uint16_t flags)
       nw_slf->keys     = slf_keys;
       out              = (leaf_t*)nw_slf;
     }
-
+  out->hash = h;
   return out;
 }
 
@@ -87,28 +91,6 @@ bvec_t*  cp_bvec(bvec_t* frm, int32_t grow)
   bvec_t* out = vm_allocw(8, frmsz + grow);
   memcpy((void*)out,(void*)frm,16+frmsz);
   return out;
-}
-
-size_t bvec_elcnt(val_t b)
-{
-  bvec_t* bv = tobvec(b);
-  return popcnt(bv->bv_bmap);
-}
-
-size_t bvec_sizeof(type_t* to, val_t b)
-{
-  return to->tp_base_sz + bvec_elcnt(b) * 8;
-}
-
-val_t* bvec_ref(bvec_t* bv, uint8_t idx)
-{
-  assert(idx <= 32, BOUNDS_ERR);
-
-  if (bv->bv_bmap & (1 << idx))
-    return bv->bv_elements + get_bm_index(bv->bv_bmap,idx);
-
-  else
-    return NULL;
 }
 
 static obj_t* leaf_search(leaf_t* lf, val_t k)

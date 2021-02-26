@@ -3,17 +3,9 @@
 
 #include "rascal.h"
 #include "values.h"
-#include "error.h"
 #include "obj.h"
 #include "describe.h"
-
-
-struct bvec_t
-{
-  tpkey_t  type;
-  uint32_t bv_bmap;
-  val_t    bv_elements[1];
-};
+#include "bvec.h"
 
 
 // base leaf type
@@ -74,26 +66,22 @@ typedef enum
 
 
 
-uint32_t popcnt(uint32_t);
 uint32_t get_mask(hamt_lvl_t);
-bool     isbvec(val_t);
 bool     isleaf(val_t);
 bool     issleaf(val_t);
 bool     isdleaf(val_t);
 leaf_t*  sf_toleaf(const chr_t*,int32_t,const chr_t*,val_t*);
-bvec_t*  sf_tobvec(const chr_t*,int32_t,const chr_t*,val_t*);
-bvec_t*  mk_bvec(uint8_t,size_t,uint16_t);
+dleaf_t* sf_todleaf(const chr_t*,int32_t,const chr_t*,val_t*);
+sleaf_t* sf_tosleaf(const chr_t*,int32_t,const chr_t*,val_t*);
+bvec_t*  mk_hamt_nd(uint8_t,size_t,uint16_t);
 leaf_t*  mk_leaf(hash_t,val_t,uint16_t);
-bvec_t*  cp_bvec(bvec_t*,int32_t);
-size_t   bvec_elcnt(val_t);
-size_t   bvec_sizeof(type_t*,val_t);
-val_t*   bvec_ref(bvec_t*,uint8_t);
 obj_t*   hamt_search(val_t,val_t);
 val_t    hamt_insert(val_t*,val_t,uint16_t,rcmp_t);
 val_t    hamt_put(val_t*,val_t,val_t,uint16_t,rcmp_t);
 int32_t  hamt_remove(val_t*,val_t,uint16_t);
 
-#define tobvec(v) sf_tobvec(__FILE__,__LINE__,__func__,&(v))
-#define toleaf(v) sf_toleaf(__FILE__,__LINE__,__func__,&(v))
+#define toleaf(v)  sf_toleaf(__FILE__,__LINE__,__func__,&(v))
+#define todleaf(v) sf_todleaf(__FILE__,__LINE__,__func__,&(v))
+#define tosleaf(v) sf_tosleaf(__FILE__,__LINE__,__func__,&(v))
 
 #endif

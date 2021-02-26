@@ -3,6 +3,7 @@
 
 #define opcodes_h
 #include "common.h"
+#include "rtypes.h"
 
 /* this module contains the exec/eval opcodes */
 
@@ -55,9 +56,9 @@ typedef enum
   {
     LBL_LITERAL,
     LBL_SYMBOL,
+    LBL_QUOTE,
     LBL_SETV,
     LBL_DEF,
-    LBL_QUOTE,
     LBL_IF,
     LBL_FUN,
     LBL_MACRO,
@@ -65,6 +66,7 @@ typedef enum
     LBL_LET,
     LBL_FUNAPP,
   } flabel_t;
+
 
 /* end opcodes.h */
 #endif

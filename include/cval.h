@@ -1,7 +1,7 @@
 #ifndef cval_h
 #define cval_h
 
-#include "rascal.h"
+#include "rsp_core.h"
 #include "values.h"
 #include "error.h"
 #include "mem.h"

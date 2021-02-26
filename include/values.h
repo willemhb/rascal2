@@ -1,7 +1,6 @@
 #ifndef value_h
 #define value_h
-#include "rascal.h"
-#include "error.h"
+#include "rsp_core.h"
 
 // checking tags, getting type information
 uint32_t   ltag(val_t);
@@ -30,11 +29,11 @@ obj_t*     objhead(val_t);
 #define cdr_(v)              (ptr(val_t*,(val_t)(v))[1])
 
 val_t     tag_from_type(rsp_c64_t,type_t*);
-val_t     tag_from_tpkey(rsp_c64_t, tpkey_t);
+val_t     tag_from_tpkey(rsp_c64_t,tpkey_t);
 
-#define tag(v,k)                                                  \
-  _Generic((k), type_t*:tag_from_type,                            \
-	        int32_t:tag_from_tpkey)((rsp_c64_t)(v).bits64,k)
+#define tag(v,k)                                                   \
+  _Generic((k), type_t*:tag_from_type,                             \
+	        default:tag_from_tpkey)(((rsp_c64_t)(v)),k)
 
 type_t*  val_type(val_t);
 type_t*  tk_type(tpkey_t);

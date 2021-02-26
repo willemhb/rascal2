@@ -14,20 +14,20 @@ return (pair_t*)hd;
 
 
 /* object constructors */
-pair_t* mk_list(val_t* args, size_t argc)
+list_t* mk_list(val_t* args, size_t argc)
 {
   if (argc == 0)
     return NULL;
 
   else
     {
-      pair_t* out = vm_allocc(argc);
-      pair_t* curr = out;
+      list_t* out = vm_allocc(argc);
+      list_t* curr = out;
       size_t i = 1;
       for (; i < argc - 1; i++, curr++)
     {
       head(curr) = args[i];
-      tail(curr) = (val_t)(curr + 1);
+      tail(curr) = (curr + 1);
     }
 
   head(curr) = args[i];
@@ -150,6 +150,21 @@ pair_t* pair_append(pair_t** ls, val_t v)
     return *ls;
 }
 
+val_t pop_list(size_t n, val_t* loc)
+{
+  list_t* ls = tolist(*loc);
+
+  while (n--)
+    ls = tail(ls);
+
+  *loc = tag(ls,LIST);
+  return head(ls);
+}
+
+inline bool last_expression(val_t x)
+{
+  return tolist(x)->cdr == NULL;
+}
 
 /* printing */
 void prn_pair(val_t p, riostrm_t* f) {

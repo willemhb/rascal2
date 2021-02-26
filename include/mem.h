@@ -1,15 +1,20 @@
 #ifndef mem_h
 #define mem_h
-#include "rascal.h"
+#include "rsp_core.h"
 #include "values.h"
-#include "error.h"
 
 // stack manipulation
 void  grow_stack();
+void  grow_dump();
 val_t pop();
+void  save(uint32_t);
+void  restore(uint32_t);
+void  frestore(uint32_t); // restore register values without relinquishing stack space
+void  fsave(uint32_t);    // save values without consuming stack space (used with frestore)
 val_t push(val_t);
 val_t pushn(size_t);
 void  popn(size_t);
+
 
 // memory management
 void*    vm_cmalloc(uint64_t);

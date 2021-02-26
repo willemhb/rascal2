@@ -31,7 +31,7 @@ typedef struct vcval_t   vcval_t;
 /* builtin object types */
 typedef struct rstr_t     rstr_t;
 typedef struct bytes_t    bytes_t;
-typedef struct fvec_t     fvec_t;
+typedef struct rvec_t     rvec_t;
 typedef struct bvec_t     bvec_t;
 typedef struct leaf_t     leaf_t;
 typedef struct function_t function_t;
@@ -179,6 +179,12 @@ typedef union
 {
   val_t    value;
   void*    ptr;
+  pair_t*  pair;
+  list_t*  list;
+  obj_t*   obj;
+  cval_t*  cvalue;
+  rvec_t*  rvec;
+  bvec_t*  bvec;
   uchr_t*  mem;
   uint64_t bits64;
   rint_t   integer;

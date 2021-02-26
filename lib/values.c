@@ -83,7 +83,6 @@ val_t tag_from_tpkey(rsp_c64_t d, tpkey_t t)
   return d.bits64 | t;
 }
 
-
 // top-level functions for hashing and sizing
 inline size_t val_sizeof(val_t v, type_t* to)
 {

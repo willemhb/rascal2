@@ -2,7 +2,6 @@
 #define strlib_h
 #include "common.h"
 
-
 // numeric utilities & hashing utilities
 int32_t  incu8(wchar_t*, const chr_t*);
 size_t   strsz(const chr_t*);

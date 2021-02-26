@@ -49,7 +49,7 @@ extern val_t R_GLOBAL_CONSTANTS[16];
 #define R_ZERO      R_GLOBAL_VALUES[5]
 #define R_ONE       R_GLOBAL_VALUES[6]
 #define R_TWO       R_GLOBAL_VALUES[7]
-#define R_EOF       R_GLOBAL_VALUES[10] 
+#define R_EOF       R_GLOBAL_VALUES[10]
 #define R_STDIN     R_GLOBAL_CONSTANTS[0]
 #define R_STDOUT    R_GLOBAL_CONSTANTS[1]
 #define R_STDERR    R_GLOBAL_CONSTANTS[2]
@@ -73,45 +73,22 @@ extern const chr_t* BUILTIN_TYPE_NAMES[16];
 
 // main memory
 extern uchr_t *RAM, *FREE, *EXTRA;
-extern val_t HEAPSIZE, STACKSIZE, HEAPCRITICAL;
+extern val_t HEAPSIZE, STACKSIZE, DUMPSIZE, HEAPCRITICAL;
 const  float RAM_LOAD_FACTOR = 0.8;
 extern bool GROWHEAP, GREWHEAP;
 
-// stack and registers
-extern val_t *STACK;
-extern val_t REGISTERS[16];
+// stack, registers, and top-level namespace
+extern val_t *STACK, *DUMP, DP;
+extern val_t MAIN;
+const size_t NUM_REG = 4;
+const size_t SP_MIN  = NUM_REG;
 
-// aliases for main registers
-#define VAL             REGISTERS[0]
-#define ENVT            REGISTERS[1]
-#define CODE            REGISTERS[2]
-#define CONT            REGISTERS[3]
-#define SB              REGISTERS[4]        // stack base
-#define SP              REGISTERS[5]        // stack top
-#define PC              REGISTERS[6]        // program counter
-#define OP              REGISTERS[7]        // current instruction
-#define ARG(x)          REGISTERS[8 + (x)]  // bytecode operands
-#define TMP(x)          REGISTERS[12 + (x)] // auxilliary registers
+// aliases for main registers (they live in reserved space at the base of the stack)
+#define REGISTERS       STACK
+#define SP              STACK[0]
+#define TOS             STACK[SP]
 
-// flags for bitmapping the main registers
-typedef enum {
-  RX_VALUE    =0x0001u,
-  RX_ENVT     =0x0002u,
-  RX_CONT     =0x0004u,
-  RX_FUNC     =0x0008u,
-  RX_BP       =0x0010u,
-  RX_SP       =0x0020u,
-  RX_PC       =0x0040u,
-  RX_OP       =0x0080u,
-  RX_ARG_0    =0x0100u,
-  RX_ARG_1    =0x0200u,
-  RX_ARG_2    =0x0400u,
-  RX_ARG_3    =0x0800u,
-  WRX_0       =0x1000u,
-  WRX_1       =0x2000u,
-  WRX_2       =0x4000u,
-  WRX_3       =0x8000u,
-} rx_map_t;
+// flags for bitmapping the main registers (EXP and VAL are never saved)
 
 /* reader state */
 extern chr_t TOKBUFF[];

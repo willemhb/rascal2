@@ -1,12 +1,10 @@
 #ifndef rstr_h
 #define rstr_h
 
-#include "rascal.h"
+#include "rsp_core.h"
 #include "values.h"
-#include "error.h"
 #include "mem.h"
 #include "cval.h"
-#include "hashing.h"
 #include "strlib.h"
 #include "describe.h"
 

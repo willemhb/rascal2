@@ -1,6 +1,6 @@
 #ifndef hashing_h
 #define hashing_h
-#include "rascal.h"
+#include "common.h"
 #include "strlib.h"
 
 
